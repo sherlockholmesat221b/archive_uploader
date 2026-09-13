@@ -28,6 +28,7 @@ from typing import List
 from .config import get_secret
 from .models import Release
 from .textutils import slugify
+from .ui import info
 
 REMOTE_ROOT = "/Root/archive_uploader_backups"
 
@@ -66,43 +67,55 @@ def mega_backup_release(rel: Release, remote_root: str = REMOTE_ROOT) -> bool:
     print(f"  ☁️  Backing up to mega.nz: {remote_dir}")
     try:
         # megamkdir does not reliably create missing parent directories.
-        # Create each component from the root down.  A component may already
-        # exist, in which case its megamkdir invocation can fail harmlessly;
-        # the important part is that we continue to the next component.
+        # Create each component from the root down and show what happens.
+        info("Checking/creating remote directory tree")
         remote_parts = [part for part in remote_dir.split("/") if part]
         current = ""
         for part in remote_parts:
             current += "/" + part
-            subprocess.run(
+            result = subprocess.run(
                 ["megamkdir", *auth, "--no-ask-password", current],
                 capture_output=True, text=True,
             )
-
-        # At this point the complete destination should exist.  If the
-        # destination could not be created, let megacopy/megaput report the
-        # real remote-path error below.
+            if result.returncode == 0:
+                info(f"✓ Remote directory ready: {current}", 4)
+            else:
+                error = (result.stderr or result.stdout).strip()
+                # megamkdir commonly reports an existing directory as an
+                # error.  Keep that non-fatal, but surface any other error.
+                if "already exists" in error.lower() or "exists" in error.lower():
+                    info(f"· Remote directory already exists: {current}", 4)
+                else:
+                    print(f"  ! Could not create/check {current}: {error or 'unknown megamkdir error'}")
+                    return False
 
         if target.is_dir():
             if not shutil.which("megacopy"):
                 print("  ! megacopy not found on PATH — cannot back up a folder without it.")
                 return False
+            files = [p for p in target.rglob("*") if p.is_file()]
+            total_bytes = sum(p.stat().st_size for p in files)
+            info(f"Local release: {len(files)} files, {total_bytes / (1024 * 1024):.2f} MiB", 2)
+            info("Uploading with megacopy; native transfer progress follows:", 2)
             result = subprocess.run(
-                ["megacopy", *auth, "--no-ask-password", "--no-progress",
+                ["megacopy", *auth, "--no-ask-password",
                  "--local", str(target), "--remote", remote_dir],
-                capture_output=True, text=True,
             )
         else:
+            if not shutil.which("megaput"):
+                print("  ! megaput not found on PATH — cannot upload a single file.")
+                return False
             files = [str(target)]
             if rel.cover_path and rel.cover_path.exists():
                 files.append(str(rel.cover_path))
+            info(f"Uploading {len(files)} file(s) with megaput; native transfer progress follows:", 2)
             result = subprocess.run(
-                ["megaput", *auth, "--no-ask-password", "--no-progress",
+                ["megaput", *auth, "--no-ask-password",
                  "--path", remote_dir + "/", *files],
-                capture_output=True, text=True,
             )
 
         if result.returncode != 0:
-            print(f"  ! mega.nz backup failed: {result.stderr.strip() or result.stdout.strip()}")
+            print(f"  ! mega.nz backup failed (exit {result.returncode})")
             return False
 
         print("  ✓ mega.nz backup complete.")

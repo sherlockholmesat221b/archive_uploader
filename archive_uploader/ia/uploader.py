@@ -123,6 +123,9 @@ def upload_release(
     expected_keys = get_expected_file_keys(rel)
     qobuz_id = rel.provider_ids.get("Qobuz", "")
 
+    print(f"  → IA target: {identifier}")
+    print(f"  → Expected manifest: {len(expected_keys)} files")
+
     # 1. Local State Validation (SQLite + cross-device log union)
     if (
         (rel.upc and store.is_uploaded(rel.upc, expected_files=expected_keys))
@@ -135,6 +138,7 @@ def upload_release(
         return
 
     # 2. Remote IA Manifest Validation (Direct Identifier)
+    print("  → Checking Internet Archive manifest")
     is_complete, missing_keys = check_remote_manifest(identifier, expected_keys)
     if is_complete:
         print(f"  -> ⏭️ [SKIPPED] '{identifier}' already fully uploaded on Internet Archive.")
@@ -168,6 +172,7 @@ def upload_release(
             return
 
     # 4. Generate Payload & Run Upload (Filtered to missing files if resuming)
+    print("  → Building IA payload, deriving Opus, and packaging archives")
     identifier, metadata, files_dict, temp_cleanup_files = build_ia_payload(
         rel, collection, mediatype, known_identifiers=store, opus_bitrate=opus_bitrate,
         identifier=identifier,
@@ -214,6 +219,7 @@ def upload_release(
                 ia_payload=metadata,
             )
 
+        print(f"  → Uploading {len(files_dict)} file(s) to Internet Archive; IA transfer progress follows:")
         responses = ia.upload(
             identifier,
             files=files_dict,

@@ -14,6 +14,7 @@ from archive_uploader.models import ExternalLink, Release
 from archive_uploader.packaging import create_clean_zip, derive_opus_file, determine_file_key
 from archive_uploader.state.backup import compute_script_hash, get_repo_ref
 from archive_uploader.textutils import slugify
+from archive_uploader.ui import progress
 
 SYSTEM_EXCLUDES = {
     ".ds_store", "thumbs.db", "desktop.ini", "@eadir",
@@ -170,18 +171,13 @@ def build_ia_payload(
     total_flacs = len(flac_list)
     if total_flacs > 0:
         for idx, flac_p in enumerate(flac_list, start=1):
-            pct = int((idx / total_flacs) * 100)
-            sys.stdout.write(f"\r   🎵 Deriving {opus_bitrate} Opus audio... {pct}% ({idx}/{total_flacs})")
-            sys.stdout.flush()
+            progress(f"🎵 Deriving {opus_bitrate} Opus", idx, total_flacs, suffix=f"  {flac_p.name}")
             try:
                 opus_p = derive_opus_file(flac_p, bitrate=opus_bitrate)
                 opus_map[flac_p] = opus_p
                 temp_cleanup_files.append(opus_p)
             except Exception as e:
                 sys.stdout.write(f"\n      ! Error deriving Opus for {flac_p.name}: {e}\n")
-        sys.stdout.write("\n")
-        sys.stdout.flush()
-
     is_single = (
         rel.kind == "single"
         or getattr(rel, "is_single", False)
@@ -242,16 +238,13 @@ def build_ia_payload(
         flac_zip_path = temp_zip_dir / flac_zip_name
         opus_zip_path = temp_zip_dir / opus_zip_name
 
-        sys.stdout.write("   📦 Packaging FLAC ZIP archive...")
-        sys.stdout.flush()
+        print("   📦 Packaging FLAC ZIP archive...")
         create_clean_zip(rel, flac_zip_path, exclude_ext=".opus", opus_map=opus_map)
-        sys.stdout.write(" Done.\n")
+        print("   ✓ FLAC ZIP ready")
 
-        sys.stdout.write("   📦 Packaging Opus ZIP archive...")
-        sys.stdout.flush()
+        print("   📦 Packaging Opus ZIP archive...")
         create_clean_zip(rel, opus_zip_path, exclude_ext=".flac", opus_map=opus_map)
-        sys.stdout.write(" Done.\n")
-        sys.stdout.flush()
+        print("   ✓ Opus ZIP ready")
 
         temp_cleanup_files.extend([flac_zip_path, opus_zip_path])
 

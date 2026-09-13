@@ -11,6 +11,7 @@ from .ia import upload_release
 from .mega_backup import mega_backup_release
 from .scanning import scan_directory
 from .state.store import SQLiteStateStore
+from .ui import stage
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Resumable FLAC to Internet Archive automated uploader.")
@@ -48,7 +49,8 @@ def main() -> None:
     # Force exclusive SQLite persistence engine
     state = SQLiteStateStore()
 
-    print(f"Scanning target path: {root_path}")
+    stage(1, 5, "Scanning", str(root_path))
+    print("  → Discovering FLAC releases and reading local tags")
     releases = scan_directory(root_path)
 
     if not releases:
@@ -58,13 +60,20 @@ def main() -> None:
     print(f"Found {len(releases)} item(s) to process.")
 
     try:
-        for rel in releases:
+        for index, rel in enumerate(releases, start=1):
+            print("\n" + "═" * 72)
+            print(f"Release {index}/{len(releases)}: {rel.artist} — {rel.title}")
+            print("═" * 72)
+
+            stage(2, 5, "Metadata enrichment", f"{rel.artist} — {rel.title}")
             if args.skip_enrichment:
+                print("  → Online providers disabled; applying local overrides only")
                 apply_overrides(rel, load_overrides(rel))
             else:
                 enrich(rel)
 
             if args.review:
+                stage(3, 5, "Interactive review", "edit, compare, save, or approve")
                 result = review_release(rel)
                 if result == "cancel":
                     print("  -> Review canceled; release skipped.")
@@ -75,14 +84,19 @@ def main() -> None:
                 print("  -> Metadata approved.")
 
             if args.manual_metadata:
+                stage(3, 5, "Manual metadata", "writing review template")
                 path = write_starter_override(rel)
                 print(f"  \u270e Metadata template ready at: {path}")
                 print("     Fill in whatever fields matter, then re-run without --manual-metadata to upload.")
                 continue
 
             if args.mega_backup and not args.dry_run:
+                stage(4, 5, "Mega backup", "preserving original local files")
                 mega_backup_release(rel)
+            elif not args.mega_backup:
+                print("\n[4/5] Mega backup — disabled")
 
+            stage(5, 5, "Internet Archive", "derivation, packaging, manifest checks, upload")
             upload_release(rel, args.collection, args.mediatype, args.dry_run, args.delete_after_upload, state)
     except KeyboardInterrupt:
         print("\nProcess canceled by user. Local files preserved. Exiting...")

@@ -13,6 +13,7 @@ from .overrides import apply_overrides, load_overrides
 from .qobuz import QobuzProvider
 from .discogs import DiscogsProvider
 from .wikipedia import WikipediaProvider
+from ..ui import info
 
 DEFAULT_PROVIDERS: List[Provider] = [
     QobuzProvider(), MusicBrainzProvider(), DiscogsProvider(), WikipediaProvider(),
@@ -69,16 +70,27 @@ def enrich(rel: Release, providers: Optional[List[Provider]] = None) -> Release:
     field_sources: Dict[str, Tuple[str, str]] = {}  # field -> (provider_name, value) that won
 
     for provider in providers:
+        print(f"  → {provider.name}: querying provider")
         try:
             result = provider.fetch(rel)
         except Exception as e:
-            print(f"  ! {provider.name} provider failed: {e}")
+            print(f"  ! {provider.name}: failed: {e}")
             continue
 
         if not result:
+            print(f"  · {provider.name}: no match / no usable metadata")
             continue
 
         _cache_raw(rel, provider.name, result)
+        found = []
+        if result.get("id"):
+            found.append(f"id={result['id']}")
+        if result.get("url"):
+            found.append("link")
+        for field in _MERGE_FIELDS:
+            if result.get(field):
+                found.append(field)
+        info(f"✓ {provider.name}: " + (", ".join(found) if found else "response received"), 4)
 
         if result.get("id"):
             rel.provider_ids[provider.name] = result["id"]
