@@ -119,7 +119,7 @@ def upload_release(
 
     base = f"{rel.artist} {rel.title}".strip() or rel.dir_or_file.name
     id_hash = hashlib.md5(base.encode("utf-8")).hexdigest()[:8]
-    identifier = resolve_identifier(base, id_hash, store)
+    identifier = rel.identifier or resolve_identifier(base, id_hash, store)
     expected_keys = get_expected_file_keys(rel)
     qobuz_id = rel.provider_ids.get("Qobuz", "")
 
@@ -169,7 +169,8 @@ def upload_release(
 
     # 4. Generate Payload & Run Upload (Filtered to missing files if resuming)
     identifier, metadata, files_dict, temp_cleanup_files = build_ia_payload(
-        rel, collection, mediatype, known_identifiers=store, opus_bitrate=opus_bitrate
+        rel, collection, mediatype, known_identifiers=store, opus_bitrate=opus_bitrate,
+        identifier=identifier,
     )
 
     # Filter out files that already exist on IA

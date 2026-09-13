@@ -23,7 +23,7 @@ OVERRIDE_FILENAME = ".archive_meta.json"
 
 # Fields an override file may set directly on the Release.
 SIMPLE_FIELDS = (
-    "title", "artist", "date", "genre", "label", "upc", "isrc", "composer",
+    "title", "artist", "date", "identifier", "genre", "label", "upc", "isrc", "composer",
     "copyright", "audio_spec", "external_description", "wikipedia_article",
     "cover_url",
 )
@@ -88,6 +88,28 @@ def apply_overrides(rel: Release, overrides: Dict[str, Any]) -> None:
     track_overrides = overrides.get("tracks", {})
     if track_overrides:
         _apply_track_overrides(rel, track_overrides)
+
+
+def release_to_override(rel: Release) -> Dict[str, Any]:
+    """Serialize the current reviewed Release into a complete override file."""
+    data: Dict[str, Any] = {field: getattr(rel, field, "") for field in SIMPLE_FIELDS}
+    data["external_links"] = [
+        {"service": link.service, "url": link.url, "logo_url": link.logo_url}
+        for link in rel.external_links
+    ]
+    data["provider_ids"] = dict(rel.provider_ids)
+    data["tracks"] = {
+        t.path.name: {field: getattr(t, field, "") for field in TRACK_FIELDS}
+        for t in rel.tracks
+    }
+    return data
+
+
+def save_review_override(rel: Release) -> Path:
+    """Persist the current TUI-reviewed metadata as the authoritative override."""
+    path = override_path(rel)
+    path.write_text(json.dumps(release_to_override(rel), indent=2, ensure_ascii=False) + "\n")
+    return path
 
 
 def write_starter_override(rel: Release) -> Path:

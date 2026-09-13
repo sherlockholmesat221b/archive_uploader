@@ -71,3 +71,44 @@ def test_write_starter_override_does_not_overwrite_existing_file(tmp_path):
     write_starter_override(rel)
 
     assert load_overrides(rel)["genre"] == "Hand Written"
+
+
+def test_identifier_override_is_applied(tmp_path):
+    album_dir = tmp_path / "Some Album"
+    album_dir.mkdir()
+    rel = Release(kind="album", dir_or_file=album_dir, identifier="")
+
+    (album_dir / ".archive_meta.json").write_text(
+        '{"identifier": "flac-my-custom-identifier"}'
+    )
+    apply_overrides(rel, load_overrides(rel))
+
+    assert rel.identifier == "flac-my-custom-identifier"
+
+
+def test_review_serialization_round_trips_identifier_and_tracks(tmp_path):
+    from archive_uploader.enrichment.overrides import release_to_override, save_review_override
+    from archive_uploader.models import TrackFile
+
+    album_dir = tmp_path / "Some Album"
+    album_dir.mkdir()
+    track = TrackFile(
+        path=album_dir / "01.flac",
+        title="Reviewed Track",
+        artist="Reviewed Artist",
+        tracknumber="1",
+    )
+    rel = Release(
+        kind="album",
+        dir_or_file=album_dir,
+        identifier="flac-reviewed-id",
+        title="Reviewed Album",
+        tracks=[track],
+    )
+
+    assert release_to_override(rel)["identifier"] == "flac-reviewed-id"
+    path = save_review_override(rel)
+    data = load_overrides(rel)
+    assert path.exists()
+    assert data["identifier"] == "flac-reviewed-id"
+    assert data["tracks"]["01.flac"]["title"] == "Reviewed Track"

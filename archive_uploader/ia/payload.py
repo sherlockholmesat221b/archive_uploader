@@ -69,11 +69,12 @@ def build_ia_payload(
     mediatype: str,
     known_identifiers: Optional[Any] = None,
     opus_bitrate: str = "192k",
+    identifier: Optional[str] = None,
 ) -> Tuple[str, dict, Dict[str, str], List[Path]]:
     """Builds Internet Archive payload metadata and target file map."""
     base = f"{rel.artist} {rel.title}".strip() or rel.dir_or_file.name
     id_hash = hashlib.md5(base.encode("utf-8")).hexdigest()[:8]
-    identifier = resolve_identifier(base, id_hash, known_identifiers)
+    identifier = identifier or rel.identifier or resolve_identifier(base, id_hash, known_identifiers)
 
     # Previously: ensure_script_backup() tarred the whole package and
     # attached it as a file to every single item. Now just hash + link

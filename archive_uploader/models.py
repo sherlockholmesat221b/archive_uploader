@@ -14,6 +14,8 @@ class TrackFile:
     path: Path
     title: str = ""
     artist: str = ""
+    # Explicit Internet Archive identifier. Empty means automatic resolution.
+    identifier: str = ""
     album: str = ""
     date: str = ""
     tracknumber: str = ""
@@ -40,6 +42,8 @@ class Release:
     tracks: List[TrackFile] = field(default_factory=list)
     title: str = ""
     artist: str = ""
+    # Explicit Internet Archive identifier. Empty means automatic resolution.
+    identifier: str = ""
     date: str = ""
     source: str = "Local Tags"
     cover_url: str = ""

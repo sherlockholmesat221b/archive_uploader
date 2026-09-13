@@ -49,7 +49,15 @@ still works without it.
 ```bash
 python -m archive_uploader --root /path/to/music --dry-run
 python -m archive_uploader --root /path/to/music --delete-after-upload
+python -m archive_uploader --root /path/to/music --review
 ```
+
+`--review` (also `--interactive`) opens a terminal UI after metadata
+enrichment. Use the arrow keys to select a release field or track, `Enter`
+to edit it, `S` to save the reviewed metadata without uploading, `A` to
+approve it and continue to the upload, and `Q` to skip the release. The
+Internet Archive identifier is editable in the same screen; a non-empty
+identifier overrides automatic identifier resolution.
 
 ## Adding metadata by hand (rare items, or correcting a fetched value)
 

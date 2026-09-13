@@ -1,0 +1,373 @@
+diff --git a/README.md b/README.md
+index 76af4a3..9c5f34c 100644
+--- a/README.md
++++ b/README.md
+@@ -49,8 +49,16 @@ still works without it.
+ ```bash
+ python -m archive_uploader --root /path/to/music --dry-run
+ python -m archive_uploader --root /path/to/music --delete-after-upload
++python -m archive_uploader --root /path/to/music --review
+ ```
+ 
++`--review` (also `--interactive`) opens a terminal UI after metadata
++enrichment. Use the arrow keys to select a release field or track, `Enter`
++to edit it, `S` to save the reviewed metadata without uploading, `A` to
++approve it and continue to the upload, and `Q` to skip the release. The
++Internet Archive identifier is editable in the same screen; a non-empty
++identifier overrides automatic identifier resolution.
++
+ ## Adding metadata by hand (rare items, or correcting a fetched value)
+ 
+ Drop a `.archive_meta.json` next to a release (inside the folder for
+diff --git a/archive_uploader/cli.py b/archive_uploader/cli.py
+index 4d7cca4..814d07a 100644
+--- a/archive_uploader/cli.py
++++ b/archive_uploader/cli.py
+@@ -6,6 +6,7 @@ from pathlib import Path
+ 
+ from .enrichment import enrich
+ from .enrichment.overrides import apply_overrides, load_overrides, write_starter_override
++from .review import review_release
+ from .ia import upload_release
+ from .mega_backup import mega_backup_release
+ from .scanning import scan_directory
+@@ -25,6 +26,11 @@ def main() -> None:
+         help="Skip provider metadata lookups entirely; use only local tags and any .archive_meta.json "
+              "override (for releases nothing online will ever match)",
+     )
++    parser.add_argument(
++        "--review", "--interactive", dest="review", action="store_true",
++        help="Open an interactive TUI after enrichment; edit metadata/IA identifier, "
++             "S saves and continues, A approves and uploads, Q skips the release",
++    )
+     parser.add_argument(
+         "--manual-metadata", action="store_true",
+         help="Write (or reuse) each release's .archive_meta.json template and stop before uploading it, "
+@@ -58,6 +64,16 @@ def main() -> None:
+             else:
+                 enrich(rel)
+ 
++            if args.review:
++                result = review_release(rel)
++                if result == "cancel":
++                    print("  -> Review canceled; release skipped.")
++                    continue
++                if result == "save":
++                    print(f"  -> Reviewed metadata saved; release skipped. Re-run --review to approve/upload.")
++                    continue
++                print("  -> Metadata approved.")
++
+             if args.manual_metadata:
+                 path = write_starter_override(rel)
+                 print(f"  \u270e Metadata template ready at: {path}")
+diff --git a/archive_uploader/enrichment/overrides.py b/archive_uploader/enrichment/overrides.py
+index 5a3fcbe..ee51e05 100644
+--- a/archive_uploader/enrichment/overrides.py
++++ b/archive_uploader/enrichment/overrides.py
+@@ -23,7 +23,7 @@ OVERRIDE_FILENAME = ".archive_meta.json"
+ 
+ # Fields an override file may set directly on the Release.
+ SIMPLE_FIELDS = (
+-    "title", "artist", "date", "genre", "label", "upc", "isrc", "composer",
++    "title", "artist", "date", "identifier", "genre", "label", "upc", "isrc", "composer",
+     "copyright", "audio_spec", "external_description", "wikipedia_article",
+     "cover_url",
+ )
+@@ -90,6 +90,28 @@ def apply_overrides(rel: Release, overrides: Dict[str, Any]) -> None:
+         _apply_track_overrides(rel, track_overrides)
+ 
+ 
++def release_to_override(rel: Release) -> Dict[str, Any]:
++    """Serialize the current reviewed Release into a complete override file."""
++    data: Dict[str, Any] = {field: getattr(rel, field, "") for field in SIMPLE_FIELDS}
++    data["external_links"] = [
++        {"service": link.service, "url": link.url, "logo_url": link.logo_url}
++        for link in rel.external_links
++    ]
++    data["provider_ids"] = dict(rel.provider_ids)
++    data["tracks"] = {
++        t.path.name: {field: getattr(t, field, "") for field in TRACK_FIELDS}
++        for t in rel.tracks
++    }
++    return data
++
++
++def save_review_override(rel: Release) -> Path:
++    """Persist the current TUI-reviewed metadata as the authoritative override."""
++    path = override_path(rel)
++    path.write_text(json.dumps(release_to_override(rel), indent=2, ensure_ascii=False) + "\n")
++    return path
++
++
+ def write_starter_override(rel: Release) -> Path:
+     """Drop a blank template next to a release so filling in metadata by
+     hand — release-level AND per-track — is just editing JSON, not
+diff --git a/archive_uploader/ia/payload.py b/archive_uploader/ia/payload.py
+index 6d83e49..873d8dd 100644
+--- a/archive_uploader/ia/payload.py
++++ b/archive_uploader/ia/payload.py
+@@ -69,11 +69,12 @@ def build_ia_payload(
+     mediatype: str,
+     known_identifiers: Optional[Any] = None,
+     opus_bitrate: str = "192k",
++    identifier: Optional[str] = None,
+ ) -> Tuple[str, dict, Dict[str, str], List[Path]]:
+     """Builds Internet Archive payload metadata and target file map."""
+     base = f"{rel.artist} {rel.title}".strip() or rel.dir_or_file.name
+     id_hash = hashlib.md5(base.encode("utf-8")).hexdigest()[:8]
+-    identifier = resolve_identifier(base, id_hash, known_identifiers)
++    identifier = identifier or rel.identifier or resolve_identifier(base, id_hash, known_identifiers)
+ 
+     # Previously: ensure_script_backup() tarred the whole package and
+     # attached it as a file to every single item. Now just hash + link
+diff --git a/archive_uploader/ia/uploader.py b/archive_uploader/ia/uploader.py
+index 6cb60c8..fe815c9 100644
+--- a/archive_uploader/ia/uploader.py
++++ b/archive_uploader/ia/uploader.py
+@@ -119,7 +119,7 @@ def upload_release(
+ 
+     base = f"{rel.artist} {rel.title}".strip() or rel.dir_or_file.name
+     id_hash = hashlib.md5(base.encode("utf-8")).hexdigest()[:8]
+-    identifier = resolve_identifier(base, id_hash, store)
++    identifier = rel.identifier or resolve_identifier(base, id_hash, store)
+     expected_keys = get_expected_file_keys(rel)
+     qobuz_id = rel.provider_ids.get("Qobuz", "")
+ 
+@@ -169,7 +169,8 @@ def upload_release(
+ 
+     # 4. Generate Payload & Run Upload (Filtered to missing files if resuming)
+     identifier, metadata, files_dict, temp_cleanup_files = build_ia_payload(
+-        rel, collection, mediatype, known_identifiers=store, opus_bitrate=opus_bitrate
++        rel, collection, mediatype, known_identifiers=store, opus_bitrate=opus_bitrate,
++        identifier=identifier,
+     )
+ 
+     # Filter out files that already exist on IA
+diff --git a/archive_uploader/models.py b/archive_uploader/models.py
+index c3a12b1..773db81 100644
+--- a/archive_uploader/models.py
++++ b/archive_uploader/models.py
+@@ -14,6 +14,8 @@ class TrackFile:
+     path: Path
+     title: str = ""
+     artist: str = ""
++    # Explicit Internet Archive identifier. Empty means automatic resolution.
++    identifier: str = ""
+     album: str = ""
+     date: str = ""
+     tracknumber: str = ""
+@@ -40,6 +42,8 @@ class Release:
+     tracks: List[TrackFile] = field(default_factory=list)
+     title: str = ""
+     artist: str = ""
++    # Explicit Internet Archive identifier. Empty means automatic resolution.
++    identifier: str = ""
+     date: str = ""
+     source: str = "Local Tags"
+     cover_url: str = ""
+diff --git a/tests/test_overrides.py b/tests/test_overrides.py
+index 5cda842..7df833b 100644
+--- a/tests/test_overrides.py
++++ b/tests/test_overrides.py
+@@ -71,3 +71,44 @@ def test_write_starter_override_does_not_overwrite_existing_file(tmp_path):
+     write_starter_override(rel)
+ 
+     assert load_overrides(rel)["genre"] == "Hand Written"
++
++
++def test_identifier_override_is_applied(tmp_path):
++    album_dir = tmp_path / "Some Album"
++    album_dir.mkdir()
++    rel = Release(kind="album", dir_or_file=album_dir, identifier="")
++
++    (album_dir / ".archive_meta.json").write_text(
++        '{"identifier": "flac-my-custom-identifier"}'
++    )
++    apply_overrides(rel, load_overrides(rel))
++
++    assert rel.identifier == "flac-my-custom-identifier"
++
++
++def test_review_serialization_round_trips_identifier_and_tracks(tmp_path):
++    from archive_uploader.enrichment.overrides import release_to_override, save_review_override
++    from archive_uploader.models import TrackFile
++
++    album_dir = tmp_path / "Some Album"
++    album_dir.mkdir()
++    track = TrackFile(
++        path=album_dir / "01.flac",
++        title="Reviewed Track",
++        artist="Reviewed Artist",
++        tracknumber="1",
++    )
++    rel = Release(
++        kind="album",
++        dir_or_file=album_dir,
++        identifier="flac-reviewed-id",
++        title="Reviewed Album",
++        tracks=[track],
++    )
++
++    assert release_to_override(rel)["identifier"] == "flac-reviewed-id"
++    path = save_review_override(rel)
++    data = load_overrides(rel)
++    assert path.exists()
++    assert data["identifier"] == "flac-reviewed-id"
++    assert data["tracks"]["01.flac"]["title"] == "Reviewed Track"
+
+diff --git a/archive_uploader/review.py b/archive_uploader/review.py
+new file mode 100644
+index 0000000..f2f8ecc
+--- /dev/null
++++ b/archive_uploader/review.py
+@@ -0,0 +1,150 @@
++"""Interactive terminal metadata review for enriched releases.
++
++Uses only Python's standard-library curses module, so it works without adding
++another UI dependency (including on Termux builds that provide curses).
++"""
++from __future__ import annotations
++
++import curses
++import textwrap
++from typing import Callable, List, Tuple
++
++from .enrichment.overrides import SIMPLE_FIELDS, TRACK_FIELDS, save_review_override
++from .models import Release, TrackFile
++
++RELEASE_LABELS = {
++    "identifier": "IA identifier",
++    "title": "Title",
++    "artist": "Artist",
++    "date": "Date",
++    "genre": "Genre",
++    "label": "Label",
++    "upc": "UPC / Barcode",
++    "isrc": "ISRC",
++    "composer": "Composer",
++    "copyright": "Copyright",
++    "audio_spec": "Audio spec",
++    "external_description": "Description",
++    "wikipedia_article": "Wikipedia article",
++    "cover_url": "Cover URL",
++}
++
++REVIEW_FIELDS = ("identifier",) + tuple(f for f in SIMPLE_FIELDS if f != "identifier")
++
++
++def _edit(stdscr: "curses.window", prompt: str, value: str, max_len: int = 4096) -> str:
++    h, w = stdscr.getmaxyx()
++    curses.echo()
++    curses.curs_set(1)
++    stdscr.addnstr(h - 2, 0, (prompt + ": ")[: max(1, w - 1)], w - 1)
++    stdscr.refresh()
++    try:
++        raw = stdscr.getstr(h - 1, 0, max_len)
++        return raw.decode("utf-8", "replace")
++    finally:
++        curses.noecho()
++        curses.curs_set(0)
++
++
++def _run_editor(
++    stdscr: "curses.window",
++    title: str,
++    fields: List[Tuple[str, Callable[[], str], Callable[[str], None]]],
++) -> str:
++    index = 0
++    while True:
++        stdscr.erase()
++        h, w = stdscr.getmaxyx()
++        stdscr.addnstr(0, 0, title, w - 1, curses.A_BOLD)
++        stdscr.addnstr(1, 0, "↑/↓ select  Enter edit  S save  A approve+save  Q cancel", w - 1)
++        visible = max(1, h - 5)
++        start = max(0, min(index - visible // 2, len(fields) - visible))
++        for row, (name, getter, _) in enumerate(fields[start : start + visible], start=3):
++            i = start + row - 3
++            label = RELEASE_LABELS.get(name, name)
++            value = getter().replace("\n", " ↵ ")
++            if len(value) > max(0, w - 28):
++                value = value[: max(0, w - 31)] + "..."
++            line = f"{label:<24} {value}"
++            stdscr.addnstr(row, 0, line, w - 1, curses.A_REVERSE if i == index else 0)
++        stdscr.refresh()
++        key = stdscr.getch()
++        if key in (curses.KEY_UP, ord("k")):
++            index = (index - 1) % len(fields)
++        elif key in (curses.KEY_DOWN, ord("j")):
++            index = (index + 1) % len(fields)
++        elif key in (10, 13, curses.KEY_ENTER):
++            name, getter, setter = fields[index]
++            new_value = _edit(stdscr, RELEASE_LABELS.get(name, name), getter())
++            setter(new_value)
++        elif key in (ord("s"), ord("S")):
++            return "save"
++        elif key in (ord("a"), ord("A")):
++            return "approve"
++        elif key in (ord("q"), ord("Q"), 27):
++            return "cancel"
++
++
++def _track_editor(stdscr: "curses.window", track: TrackFile) -> str:
++    fields = [
++        (name, lambda n=name: getattr(track, n), lambda value, n=name: setattr(track, n, value))
++        for name in TRACK_FIELDS
++    ]
++    return _run_editor(stdscr, f"Track: {track.path.name}", fields)
++
++
++def _main(stdscr: "curses.window", rel: Release) -> str:
++    curses.curs_set(0)
++    release_fields = [
++        (name, lambda n=name: getattr(rel, n), lambda value, n=name: setattr(rel, n, value))
++        for name in REVIEW_FIELDS
++    ]
++    # Track entries are represented separately so the release editor remains
++    # usable even for albums with dozens of tracks.
++    index = 0
++    total = len(release_fields) + len(rel.tracks)
++    while True:
++        stdscr.erase()
++        h, w = stdscr.getmaxyx()
++        stdscr.addnstr(0, 0, f"Metadata review: {rel.artist} — {rel.title}", w - 1, curses.A_BOLD)
++        stdscr.addnstr(1, 0, "↑/↓ select  Enter edit  S save  A approve+save/upload  Q quit", w - 1)
++        stdscr.addnstr(2, 0, f"Source: {rel.source}    Tracks: {len(rel.tracks)}", w - 1)
++        visible = max(1, h - 5)
++        start = max(0, min(index - visible // 2, total - visible))
++        for row, pos in enumerate(range(start, min(total, start + visible)), start=4):
++            if pos < len(release_fields):
++                name, getter, _ = release_fields[pos]
++                value = getter().replace("\n", " ↵ ")
++                label = RELEASE_LABELS.get(name, name)
++                if len(value) > max(0, w - 30):
++                    value = value[: max(0, w - 33)] + "..."
++                line = f"{label:<24} {value}"
++            else:
++                track = rel.tracks[pos - len(release_fields)]
++                line = f"Track {pos - len(release_fields) + 1:>3}: {track.title or track.path.name}"
++            stdscr.addnstr(row, 0, line, w - 1, curses.A_REVERSE if pos == index else 0)
++        stdscr.refresh()
++        key = stdscr.getch()
++        if key in (curses.KEY_UP, ord("k")):
++            index = (index - 1) % total
++        elif key in (curses.KEY_DOWN, ord("j")):
++            index = (index + 1) % total
++        elif key in (10, 13, curses.KEY_ENTER):
++            if index < len(release_fields):
++                name, getter, setter = release_fields[index]
++                setter(_edit(stdscr, RELEASE_LABELS.get(name, name), getter()))
++            else:
++                _track_editor(stdscr, rel.tracks[index - len(release_fields)])
++        elif key in (ord("s"), ord("S")):
++            save_review_override(rel)
++            return "save"
++        elif key in (ord("a"), ord("A")):
++            save_review_override(rel)
++            return "approve"
++        elif key in (ord("q"), ord("Q"), 27):
++            return "cancel"
++
++
++def review_release(rel: Release) -> str:
++    """Review a release; returns ``approve``, ``save`` or ``cancel``."""
++    return curses.wrapper(_main, rel)

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .enrichment import enrich
 from .enrichment.overrides import apply_overrides, load_overrides, write_starter_override
+from .review import review_release
 from .ia import upload_release
 from .mega_backup import mega_backup_release
 from .scanning import scan_directory
@@ -24,6 +25,11 @@ def main() -> None:
         "--skip-enrichment", action="store_true",
         help="Skip provider metadata lookups entirely; use only local tags and any .archive_meta.json "
              "override (for releases nothing online will ever match)",
+    )
+    parser.add_argument(
+        "--review", "--interactive", dest="review", action="store_true",
+        help="Open an interactive TUI after enrichment; edit metadata/IA identifier, "
+             "S saves and continues, A approves and uploads, Q skips the release",
     )
     parser.add_argument(
         "--manual-metadata", action="store_true",
@@ -57,6 +63,16 @@ def main() -> None:
                 apply_overrides(rel, load_overrides(rel))
             else:
                 enrich(rel)
+
+            if args.review:
+                result = review_release(rel)
+                if result == "cancel":
+                    print("  -> Review canceled; release skipped.")
+                    continue
+                if result == "save":
+                    print(f"  -> Reviewed metadata saved; release skipped. Re-run --review to approve/upload.")
+                    continue
+                print("  -> Metadata approved.")
 
             if args.manual_metadata:
                 path = write_starter_override(rel)
