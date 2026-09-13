@@ -23,7 +23,9 @@ OVERRIDE_FILENAME = ".archive_meta.json"
 
 # Fields an override file may set directly on the Release.
 SIMPLE_FIELDS = (
-    "title", "artist", "date", "identifier", "genre", "label", "upc", "isrc", "composer",
+    "title", "artist", "date", "identifier", "genre", "label", "country",
+    "catalog_number", "release_type", "release_status", "format", "styles",
+    "secondary_artists", "upc", "isrc", "composer",
     "copyright", "audio_spec", "external_description", "wikipedia_article",
     "cover_url",
 )

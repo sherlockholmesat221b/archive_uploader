@@ -32,9 +32,12 @@ class Provider(ABC):
                       "service"/"logo_url" may be left blank — payload.py
                       infers a service name and favicon from the domain
                       when they're empty.
-        Any other recognized key (genre, label, upc, external_description,
-        copyright, audio_spec, cover_url, wikipedia_article) is merged in
-        directly. Return None on no match.
+        Any other recognized release key (genre, label, country,
+        catalog_number, release_type, release_status, format, styles,
+        secondary_artists, upc, external_description, copyright,
+        audio_spec, cover_url, wikipedia_article) is merged in directly.
+        A provider may also return ``tracks`` as a list of dictionaries with
+        ``position``, ``title``, ``artist``, and ``composer``. Return None on no match.
         """
         raise NotImplementedError
 

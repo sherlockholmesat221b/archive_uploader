@@ -68,3 +68,20 @@ def test_no_match_provider_returning_none_is_a_no_op(tmp_path):
 
     assert rel.provider_ids == {}
     assert rel.external_links == []
+
+
+def test_provider_track_credits_are_merged(tmp_path):
+    from archive_uploader.models import TrackFile
+
+    track = TrackFile(path=tmp_path / "01.flac", title="Alturas")
+    rel = Release(kind="album", dir_or_file=tmp_path, artist="Artist", title="Title", tracks=[track])
+    provider = FakeProvider({
+        "tracks": [
+            {"position": "1", "title": "Alturas", "artist": "Guest Artist", "composer": "Composer"}
+        ]
+    })
+
+    enrich(rel, providers=[provider])
+
+    assert rel.tracks[0].artist == "Guest Artist"
+    assert rel.tracks[0].composer == "Composer"

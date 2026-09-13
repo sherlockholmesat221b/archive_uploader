@@ -1,6 +1,7 @@
 """Internet Archive payload and metadata builder."""
 
 import hashlib
+import html
 import sys
 import tempfile
 import urllib.parse
@@ -63,6 +64,75 @@ def is_valid_payload_file(p: Path) -> bool:
     return True
 
 
+def _split_tags(value: str) -> List[str]:
+    """Split a human-editable semicolon-separated metadata field."""
+    return [part.strip() for part in value.split(";") if part.strip()]
+
+
+def _unique(values: List[str]) -> List[str]:
+    out: List[str] = []
+    seen = set()
+    for value in values:
+        value = str(value).strip()
+        if value and value not in seen:
+            seen.add(value)
+            out.append(value)
+    return out
+
+
+def _track_isrc_pairs(rel: Release) -> List[Tuple[str, str]]:
+    pairs: List[Tuple[str, str]] = []
+    for index, track in enumerate(rel.tracks, start=1):
+        if track.isrc:
+            number = track.tracknumber or f"{index:02d}"
+            pairs.append((str(number), track.isrc))
+    if not pairs and rel.isrc:
+        pairs.append(("release", rel.isrc))
+    return pairs
+
+
+def _track_isrcs(rel: Release) -> List[str]:
+    return _unique([code for _, code in _track_isrc_pairs(rel)])
+
+
+def _track_composers(rel: Release) -> List[str]:
+    composers: List[str] = []
+    for track in rel.tracks:
+        composers.extend(_split_tags(track.composer))
+    composers.extend(_split_tags(rel.composer))
+    return _unique(composers)
+
+
+def _track_contributors(rel: Release) -> List[str]:
+    contributors: List[str] = []
+    primary = {artist.casefold() for artist in _split_tags(rel.artist)}
+    for track in rel.tracks:
+        for artist in _split_tags(track.artist):
+            if artist and artist.casefold() not in primary:
+                contributors.append(artist)
+    return _unique(contributors)
+
+
+def _build_subjects(rel: Release) -> List[str]:
+    """Build controlled, metadata-derived IA subjects; no keyword stuffing."""
+    values = ["audio", "music", "FLAC", "lossless audio", rel.artist, rel.title]
+    values.extend(_split_tags(rel.genre))
+    values.extend(_split_tags(rel.styles))
+    values.extend(_split_tags(rel.label))
+    if rel.country:
+        values.append(rel.country)
+        values.append(f"Country: {rel.country}")
+    if rel.release_type:
+        values.append(f"Release type: {rel.release_type}")
+    for composer in _track_composers(rel):
+        values.append(composer)
+    for artist_credit in _split_tags(rel.secondary_artists):
+        # "Name (Role)" is useful in the description but is noisy as a tag.
+        values.append(artist_credit.split(" (", 1)[0])
+    values.extend(_track_contributors(rel))
+    return _unique(values)
+
+
 def build_ia_payload(
     rel: Release,
     collection: str,
@@ -120,24 +190,45 @@ def build_ia_payload(
         or len(flac_list) <= 1
     )
 
-    desc: List[str] = [f"<b>{rel.title}</b> by <b>{rel.artist}</b><br><br>"]
+    desc: List[str] = [
+        f"<b>{html.escape(rel.title)}</b> by <b>{html.escape(rel.artist)}</b><br><br>"
+    ]
 
     if rel.date:
-        desc.append(f"<b>Release Date:</b> {rel.date}<br>")
+        desc.append(f"<b>Release Date:</b> {html.escape(rel.date)}<br>")
+    if rel.country:
+        desc.append(f"<b>Country:</b> {html.escape(rel.country)}<br>")
     if rel.genre:
-        desc.append(f"<b>Genre:</b> {rel.genre}<br>")
+        desc.append(f"<b>Genre:</b> {html.escape(rel.genre)}<br>")
+    if rel.styles:
+        desc.append(f"<b>Styles:</b> {html.escape(rel.styles)}<br>")
     if rel.label:
-        desc.append(f"<b>Label / Publisher:</b> {rel.label}<br>")
+        desc.append(f"<b>Label / Publisher:</b> {html.escape(rel.label)}<br>")
+    if rel.catalog_number:
+        desc.append(f"<b>Catalog number:</b> {html.escape(rel.catalog_number)}<br>")
+    if rel.format:
+        desc.append(f"<b>Release format:</b> {html.escape(rel.format)}<br>")
+    if rel.release_type:
+        desc.append(f"<b>Release type:</b> {html.escape(rel.release_type)}<br>")
+    if rel.release_status:
+        desc.append(f"<b>Release status:</b> {html.escape(rel.release_status)}<br>")
     if rel.upc:
-        desc.append(f"<b>UPC / Barcode:</b> {rel.upc}<br>")
-    if rel.isrc:
-        desc.append(f"<b>ISRC:</b> {rel.isrc}<br>")
+        desc.append(f"<b>UPC / Barcode:</b> {html.escape(rel.upc)}<br>")
+    track_isrcs = _track_isrcs(rel)
+    if track_isrcs:
+        desc.append("<b>Track ISRCs:</b><br>")
+        for number, code in _track_isrc_pairs(rel):
+            desc.append(f"{html.escape(number)}. {html.escape(code)}<br>")
     if rel.audio_spec:
-        desc.append(f"<b>Format:</b> FLAC Lossless ({rel.audio_spec})<br>")
-    if rel.composer:
-        desc.append(f"<b>Composer:</b> {rel.composer}<br>")
+        desc.append(f"<b>Format:</b> FLAC Lossless ({html.escape(rel.audio_spec)})<br>")
+    composers = _track_composers(rel)
+    if composers:
+        desc.append(f"<b>Composers:</b> {html.escape('; '.join(composers))}<br>")
+    contributors = _unique(_split_tags(rel.secondary_artists) + _track_contributors(rel))
+    if contributors:
+        desc.append(f"<b>Additional artists / credits:</b> {html.escape('; '.join(contributors))}<br>")
     if rel.copyright:
-        desc.append(f"<b>Copyright:</b> {rel.copyright}<br>")
+        desc.append(f"<b>Copyright / provenance:</b> {html.escape(rel.copyright)}<br>")
 
     files_dict: Dict[str, str] = {}
     slug_name = slugify(base)
@@ -180,11 +271,13 @@ def build_ia_payload(
     if rel.kind == "album" and rel.tracks and not is_single:
         desc.append("<br><b>Tracklist:</b><br><ol>")
         for t in rel.tracks:
-            track_str = t.title
+            track_str = html.escape(t.title)
             if t.artist and t.artist.lower() != rel.artist.lower():
-                track_str += f" - {t.artist}"
+                track_str += f" — {html.escape(t.artist)}"
             if t.composer:
-                track_str += f" (Comp. {t.composer})"
+                track_str += f" (Comp. {html.escape(t.composer)})"
+            if t.isrc:
+                track_str += f" [ISRC: {html.escape(t.isrc)}]"
             desc.append(f"<li>{track_str}</li>")
         desc.append("</ol>")
 
@@ -193,6 +286,11 @@ def build_ia_payload(
 
     if rel.wikipedia_article:
         desc.append(f"<br><b>Article Summary:</b><br>{rel.wikipedia_article}<br>")
+
+    if rel.provider_ids:
+        desc.append("<br><b>External release identifiers:</b><br>")
+        for provider, value in sorted(rel.provider_ids.items()):
+            desc.append(f"<b>{html.escape(provider)}:</b> {html.escape(str(value))}<br>")
 
     if rel.external_links:
         badges = [render_link_badge(link) for link in rel.external_links]
@@ -232,12 +330,12 @@ def build_ia_payload(
             ext_ids.append(f"urn:{pid}:{val}")
     if rel.upc:
         ext_ids.append(f"urn:upc:{rel.upc}")
-    if rel.isrc:
-        ext_ids.append(f"urn:isrc:{rel.isrc}")
+    for code in _track_isrcs(rel):
+        ext_ids.append(f"urn:isrc:{code}")
 
-    subject_tags = [
-        t for t in ["flac", "lossless audio", rel.artist, rel.genre, rel.label] if t
-    ]
+    subject_tags = _build_subjects(rel)
+    track_isrcs = _track_isrcs(rel)
+    composers = _track_composers(rel)
 
     metadata: Dict[str, Any] = {
         "title": rel.title,
@@ -252,17 +350,48 @@ def build_ia_payload(
         "uploader_repo": repo_link,
     }
 
+    # Keep release-level fields explicit so IA's metadata search has
+    # machine-readable values in addition to the generated description.
+    for provider, value in rel.provider_ids.items():
+        if value:
+            # Stable, readable keys such as musicbrainz_id/discogs_id.
+            metadata[f"{provider.lower().replace(' ', '_').replace('-', '_')}_id"] = str(value)
+
+    if rel.artist:
+        metadata["artist"] = rel.artist
+    if rel.title:
+        metadata["album"] = rel.title
+    if rel.country:
+        metadata["country"] = rel.country
+        metadata["coverage"] = rel.country
+    if rel.genre:
+        metadata["genre"] = _split_tags(rel.genre)
+    if rel.styles:
+        metadata["style"] = _split_tags(rel.styles)
+    if rel.label:
+        metadata["publisher"] = rel.label
+        metadata["label"] = rel.label
+    if rel.catalog_number:
+        metadata["catalog_number"] = rel.catalog_number
+    if rel.format:
+        metadata["release_format"] = rel.format
+    if rel.release_type:
+        metadata["release_type"] = rel.release_type
+    if rel.release_status:
+        metadata["release_status"] = rel.release_status
     if rel.upc:
         metadata["upc"] = rel.upc
         metadata["barcode"] = rel.upc
-    if rel.genre:
-        metadata["genre"] = rel.genre
-    if rel.label:
-        metadata["publisher"] = rel.label
-    if rel.isrc:
-        metadata["isrc"] = rel.isrc
-    if rel.composer:
-        metadata["composer"] = rel.composer
+    if track_isrcs:
+        # All track ISRCs, not just the first/release-level one.
+        metadata["isrc"] = track_isrcs
+        metadata["track_isrc"] = [
+            f"{number}: {code}" for number, code in _track_isrc_pairs(rel)
+        ]
+    if composers:
+        metadata["composer"] = composers
+    if contributors:
+        metadata["contributor"] = contributors
 
     if ext_ids:
         metadata["external-identifier"] = sorted(list(set(ext_ids)))

@@ -29,7 +29,7 @@ from .config import get_secret
 from .models import Release
 from .textutils import slugify
 
-REMOTE_ROOT = "/archive_uploader_backups"
+REMOTE_ROOT = "/Root/archive_uploader_backups"
 
 
 def _mega_auth_args() -> List[str]:
@@ -60,14 +60,27 @@ def mega_backup_release(rel: Release, remote_root: str = REMOTE_ROOT) -> bool:
         return False
 
     base = f"{rel.artist} {rel.title}".strip() or target.name
+    remote_root = "/" + remote_root.strip("/")
     remote_dir = f"{remote_root}/{slugify(base)}"
 
     print(f"  ☁️  Backing up to mega.nz: {remote_dir}")
     try:
-        subprocess.run(
-            ["megamkdir", *auth, "--no-ask-password", remote_dir],
-            capture_output=True, text=True,
-        )  # non-fatal: fails harmlessly if the folder already exists
+        # megamkdir does not reliably create missing parent directories.
+        # Create each component from the root down.  A component may already
+        # exist, in which case its megamkdir invocation can fail harmlessly;
+        # the important part is that we continue to the next component.
+        remote_parts = [part for part in remote_dir.split("/") if part]
+        current = ""
+        for part in remote_parts:
+            current += "/" + part
+            subprocess.run(
+                ["megamkdir", *auth, "--no-ask-password", current],
+                capture_output=True, text=True,
+            )
+
+        # At this point the complete destination should exist.  If the
+        # destination could not be created, let megacopy/megaput report the
+        # real remote-path error below.
 
         if target.is_dir():
             if not shutil.which("megacopy"):

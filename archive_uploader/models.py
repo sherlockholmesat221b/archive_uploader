@@ -52,6 +52,14 @@ class Release:
     # Metadata
     genre: str = ""
     label: str = ""
+    country: str = ""
+    catalog_number: str = ""
+    release_type: str = ""
+    release_status: str = ""
+    format: str = ""
+    # Semicolon-separated in overrides/CLI-facing data so it remains easy to edit.
+    styles: str = ""
+    secondary_artists: str = ""
     upc: str = ""
     isrc: str = ""
     composer: str = ""

@@ -1,7 +1,7 @@
 # archive_uploader
 
 Resumable FLAC/album uploader for the Internet Archive, with online
-metadata enrichment (Qobuz, MusicBrainz, Wikipedia), manual overrides,
+metadata enrichment (Qobuz, MusicBrainz, Discogs, Wikipedia, IFPI), manual overrides,
 multi-device-safe state, and free versioning of both the state and the
 code.
 
@@ -21,7 +21,8 @@ archive_uploader/
     backup.py            numbered snapshots of the state logs
   enrichment/
     base.py              Provider interface
-    qobuz.py, musicbrainz.py, wikipedia.py
+    qobuz.py, musicbrainz.py, discogs.py, wikipedia.py
+    isrc_ifpi.py         IFPI search badge
     overrides.py          manual metadata override system
     pipeline.py           merges tags -> providers -> overrides
   ia/
@@ -43,6 +44,14 @@ pip install -e ".[dev]"
 `kabooz` (Qobuz) isn't a hard dependency — `QobuzProvider` just returns
 no match if it's missing or unconfigured, so the rest of the pipeline
 still works without it.
+
+Discogs enrichment works anonymously, but a personal API token is strongly
+recommended because anonymous API calls are more heavily rate-limited. Set
+`DISCOGS_TOKEN`, `ARCHIVE_UPLOADER_DISCOGS_TOKEN`, or the existing
+`~/.config/archive_uploader/secrets.json` `discogs.token` value. It searches
+by UPC first, then by artist/title, and fetches the full release record
+including labels/catalog numbers, country, genres/styles, formats, release
+status, credits, and track-level credits.
 
 ## Running
 
@@ -93,6 +102,30 @@ speed optimization on top of that.
   git diff snap-00041 snap-00042        # see exactly what changed
   git checkout snap-00041 -- archive_uploader/some_file.py   # revert one file
   ```
+
+## Discogs enrichment
+
+Set a Discogs personal API token before running enrichment:
+
+```bash
+export DISCOGS_TOKEN="your-token"
+python -m archive_uploader --root /path/to/music --review
+```
+
+The Discogs provider is deliberately conservative about matching: UPC/barcode
+is preferred, followed by artist/title. The raw provider response is cached
+with the other enrichment responses and the matched release is exposed as a
+Discogs external link.
+
+## Internet Archive metadata projection
+
+The uploader does more than put the first release-level ISRC into the IA
+item. It projects the reviewed metadata into IA fields and a generated
+description, including all available track ISRCs, track titles/artists/
+composers, UPC/barcode, MusicBrainz/Discogs identifiers, label and catalog
+number, country, genre/style, release format/type/status, contributors, and
+metadata-derived `subject` tags. Subjects are generated from actual release
+metadata rather than arbitrary SEO keywords.
 
 ## Adding a new metadata provider
 
