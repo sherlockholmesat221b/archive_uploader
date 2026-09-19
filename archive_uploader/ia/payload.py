@@ -211,10 +211,10 @@ def build_ia_payload(
     if rel.upc:
         desc.append(f"<b>UPC / Barcode:</b> {html.escape(rel.upc)}<br>")
     track_isrcs = _track_isrcs(rel)
-    if track_isrcs:
-        desc.append("<b>Track ISRCs:</b><br>")
-        for number, code in _track_isrc_pairs(rel):
-            desc.append(f"{html.escape(number)}. {html.escape(code)}<br>")
+#    if track_isrcs:
+#       desc.append("<b>Track ISRCs:</b><br>")
+#      for number, code in _track_isrc_pairs(rel):
+#            desc.append(f"{html.escape(number)}. {html.escape(code)}<br>")
     if rel.audio_spec:
         desc.append(f"<b>Format:</b> FLAC Lossless ({html.escape(rel.audio_spec)})<br>")
     composers = _track_composers(rel)

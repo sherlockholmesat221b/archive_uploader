@@ -5,4 +5,4 @@ like dead weight — several things here (legacy identifiers, repair
 mode, the append-only state log) look removable but aren't.
 """
 
-__version__ = "2.0.0"
+__version__ = "2.0.1"
