@@ -8,6 +8,7 @@ from ..config import CACHE_DIR
 from ..models import ExternalLink, Release
 from .base import Provider
 from .isrc_ifpi import IsrcIfpiProvider
+from .lastfm import LastFmProvider
 from .musicbrainz import MusicBrainzProvider
 from .overrides import apply_overrides, load_overrides
 from .qobuz import QobuzProvider
@@ -16,11 +17,11 @@ from .wikipedia import WikipediaProvider
 from ..ui import info
 
 DEFAULT_PROVIDERS: List[Provider] = [
-    QobuzProvider(), MusicBrainzProvider(), DiscogsProvider(), WikipediaProvider(),
+    QobuzProvider(), MusicBrainzProvider(), DiscogsProvider(), LastFmProvider(), WikipediaProvider(),
     # Link-only until isrc_ifpi.py is wired to a real endpoint — see its
     # docstring. Safe to leave enabled: it never overwrites a field, it
     # only adds a homepage badge when rel.isrc is already known.
-    IsrcIfpiProvider(),
+    # IsrcIfpiProvider(),
 ]
 
 # Fields a provider result dict may set directly on Release (besides id/url,
