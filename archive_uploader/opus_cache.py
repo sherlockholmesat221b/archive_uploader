@@ -15,10 +15,17 @@ import json
 import os
 import shutil
 import subprocess
+import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Dict, Iterable, Optional
+
+from . import concurrency
 
 MANIFEST_NAME = ".opus_manifest.json"
 _CHUNK = 1 << 20
+_MANIFEST_LOCK = threading.Lock()  # one manifest per folder, many worker threads
 
 
 def _hash_file(path: Path, algo: str) -> str:
@@ -90,7 +97,7 @@ def derive_opus_file(flac_path: Path, bitrate: str = "192k") -> Path:
     finally:
         tmp.unlink(missing_ok=True)
 
-    manifest[flac_path.name] = {
+    new_entry = {
         "bitrate": bitrate,
         "flac_size": st.st_size,
         "flac_mtime_ns": st.st_mtime_ns,
@@ -98,5 +105,36 @@ def derive_opus_file(flac_path: Path, bitrate: str = "192k") -> Path:
         "opus_size": opus_path.stat().st_size,
         "opus_sha256": _hash_file(opus_path, "sha256"),
     }
-    _save(mpath, manifest)
+    with _MANIFEST_LOCK:  # re-read under the lock so parallel workers don't clobber each other
+        manifest = _load(mpath)
+        manifest[flac_path.name] = new_entry
+        _save(mpath, manifest)
     return opus_path
+
+
+def derive_opus_batch(
+    flacs: Iterable[Path],
+    bitrate: str = "192k",
+    workers: Optional[int] = None,
+) -> Dict[Path, Path]:
+    """Derive/verify Opus for many FLACs in parallel (opusenc is single-threaded,
+    so N workers ~ N cores). Returns {flac: opus} for successes, in input order."""
+    flacs = list(flacs)
+    if not flacs:
+        return {}
+    workers = max(1, min(workers or concurrency.opus_workers(), len(flacs)))
+    total, done, out = len(flacs), 0, {}
+
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="opus") as ex:
+        futs = {ex.submit(derive_opus_file, f, bitrate): f for f in flacs}
+        for fut in as_completed(futs):
+            f = futs[fut]
+            done += 1
+            try:
+                out[f] = fut.result()
+            except Exception as e:
+                sys.stdout.write(f"\n      ! Error deriving Opus for {f.name}: {e}\n")
+            sys.stdout.write(f"\r   \U0001f3b5 Opus {bitrate} ({workers} parallel)... {done}/{total}")
+            sys.stdout.flush()
+    sys.stdout.write("\n")
+    return {f: out[f] for f in flacs if f in out}

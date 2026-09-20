@@ -11,10 +11,11 @@ from typing import Any, Dict, List, Optional, Tuple
 from archive_uploader import __version__
 from archive_uploader.ia.identifiers import resolve_identifier
 from archive_uploader.models import ExternalLink, Release
-from archive_uploader.packaging import create_clean_zip, derive_opus_file, determine_file_key
+from archive_uploader.packaging import create_clean_zip, determine_file_key
 from archive_uploader.state.backup import compute_script_hash, get_repo_ref
 from archive_uploader.textutils import slugify
 from archive_uploader.ui import progress
+from archive_uploader.opus_cache import derive_opus_batch
 
 SYSTEM_EXCLUDES = {
     ".ds_store", "thumbs.db", "desktop.ini", "@eadir",
@@ -168,16 +169,8 @@ def build_ia_payload(
             if is_valid_payload_file(p)
         ])
 
-    total_flacs = len(flac_list)
-    if total_flacs > 0:
-        for idx, flac_p in enumerate(flac_list, start=1):
-            progress(f"🎵 Deriving {opus_bitrate} Opus", idx, total_flacs, suffix=f"  {flac_p.name}")
-            try:
-                opus_p = derive_opus_file(flac_p, bitrate=opus_bitrate)
-                opus_map[flac_p] = opus_p
-                # temp_cleanup_files.append(opus_p)
-            except Exception as e:
-                sys.stdout.write(f"\n      ! Error deriving Opus for {flac_p.name}: {e}\n")
+    if flac_list:
+        opus_map = derive_opus_batch(flac_list, opus_bitrate)
     is_single = (
         rel.kind == "single"
         or getattr(rel, "is_single", False)

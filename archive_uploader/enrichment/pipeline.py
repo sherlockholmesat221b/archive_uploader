@@ -15,6 +15,7 @@ from .qobuz import QobuzProvider
 from .discogs import DiscogsProvider
 from .wikipedia import WikipediaProvider
 from ..ui import info
+from .parallel import iter_results
 
 DEFAULT_PROVIDERS: List[Provider] = [
     QobuzProvider(), MusicBrainzProvider(), DiscogsProvider(), LastFmProvider(), WikipediaProvider(),
@@ -70,13 +71,7 @@ def enrich(rel: Release, providers: Optional[List[Provider]] = None) -> Release:
 
     field_sources: Dict[str, Tuple[str, str]] = {}  # field -> (provider_name, value) that won
 
-    for provider in providers:
-        print(f"  → {provider.name}: querying provider")
-        try:
-            result = provider.fetch(rel)
-        except Exception as e:
-            print(f"  ! {provider.name}: failed: {e}")
-            continue
+    for provider, result in iter_results(rel, providers):
 
         if not result:
             print(f"  · {provider.name}: no match / no usable metadata")

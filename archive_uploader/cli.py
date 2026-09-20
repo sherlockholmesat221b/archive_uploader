@@ -18,7 +18,7 @@ from .scanning import scan_directory
 from .state.store import SQLiteStateStore
 from .sync import serve, sync
 from .ui import stage
-
+from . import concurrency
 
 def run_sync(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(
@@ -44,6 +44,7 @@ def run_sync(argv: list[str]) -> None:
         action="store_true",
         help="Listen for another archive-uploader device.",
     )
+
 
     args = parser.parse_args(argv)
 
@@ -192,7 +193,14 @@ def main() -> None:
     parser.add_argument("--quality", default=None,
                         help="kabooz quality for --qobuz (default: kabooz config)")
 
+    parser.add_argument(
+        "--aggressive",
+        action="store_true",
+        help="Max parallelism: Opus on every core, 4 concurrent IA uploads",
+    )
+
     args = parser.parse_args()
+    concurrency.set_aggressive(args.aggressive)
 
     root_path = Path(args.root).resolve()
 

@@ -63,5 +63,5 @@ def fetch_album(
         raise RuntimeError(f"{title}: no FLAC files found after download")
     rel = releases[0]
     rel.upc = rel.upc or upc  # exact-match key for the Qobuz enrichment provider
-    rel.provider_ids["qobuz"] = album_id  # used by upload_release() for qobuz_id dedupe
+    rel.provider_ids["Qobuz"] = album_id  # used by upload_release() for qobuz_id dedupe
     return rel, stage

@@ -220,29 +220,20 @@ def upload_release(
                 ia_payload=metadata,
             )
 
-        print(f"  → Uploading {len(files_dict)} file(s) to Internet Archive; IA transfer progress follows:")
-        responses = ia.upload(
-            identifier,
-            files=files_dict,
-            metadata=metadata,
-            verbose=True,
-            retries=10,
-            retries_sleep=20,
-            checksum=True,
-        )
+        print(f"  → Uploading {len(files_dict)} file(s) to Internet Archive")
+        upload_ordered(identifier, files_dict, metadata, fatal=FATAL_UPLOAD_ERRORS)
 
-        if all(getattr(r, "status_code", 200) < 400 for r in responses):
-            print("   ✓ Upload complete.")
-            if hasattr(store, "mark_uploaded"):
-                store.mark_uploaded(
-                    identifier=identifier,
-                    files=expected_keys,
-                    metadata=metadata,
-                    upc=rel.upc,
-                    qobuz_id=qobuz_id,
-                )
-            if delete_after:
-                delete_local_release(rel)
+        print("   ✓ Upload complete.")
+        if hasattr(store, "mark_uploaded"):
+            store.mark_uploaded(
+                identifier=identifier,
+                files=expected_keys,
+                metadata=metadata,
+                upc=rel.upc,
+                qobuz_id=qobuz_id,
+            )
+        if delete_after:
+            delete_local_release(rel)
 
     except Exception as e:
         err_msg = str(e).lower()
