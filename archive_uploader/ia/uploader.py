@@ -11,6 +11,7 @@ from archive_uploader.models import Release
 from archive_uploader.packaging import delete_local_release, determine_file_key
 from archive_uploader.state.combined import CombinedStateStore
 from archive_uploader.textutils import slugify
+from archive_uploader.ia.transfer import upload_ordered
 
 FATAL_UPLOAD_ERRORS = (
     "access denied", "taken offline", "403", "forbidden",

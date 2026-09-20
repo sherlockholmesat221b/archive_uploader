@@ -175,7 +175,7 @@ def build_ia_payload(
             try:
                 opus_p = derive_opus_file(flac_p, bitrate=opus_bitrate)
                 opus_map[flac_p] = opus_p
-                temp_cleanup_files.append(opus_p)
+                # temp_cleanup_files.append(opus_p)
             except Exception as e:
                 sys.stdout.write(f"\n      ! Error deriving Opus for {flac_p.name}: {e}\n")
     is_single = (

@@ -22,36 +22,36 @@ def is_valid_asset(p: Path) -> bool:
     return True
 
 
-def derive_opus_file(flac_path: Path, bitrate: str = "192k") -> Path:
-    """Derives deterministic Opus audio using serial number calculated from input FLAC MD5 hash."""
-    opus_path = flac_path.with_suffix(".opus")
-    if not opus_path.exists() or opus_path.stat().st_size == 0:
-        if not shutil.which("opusenc"):
-            raise RuntimeError("opusenc command-line tool not found in PATH.")
-
-        kbps = bitrate.replace("k", "")
-        flac_md5 = hashlib.md5(flac_path.read_bytes()).hexdigest()
-        serial_num = int(flac_md5[:8], 16) & 0xFFFFFFFF
-
-        cmd = [
-            "opusenc",
-            "--quiet",
-            "--bitrate",
-            kbps,
-            "--serial",
-            str(serial_num),
-            str(flac_path),
-            str(opus_path),
-        ]
-        try:
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
-        except subprocess.CalledProcessError as e:
-            print(f"  ! opusenc Error for {flac_path.name}:\n{e.stderr}")
-            if opus_path.exists():
-                opus_path.unlink()
-            raise e
-    return opus_path
-
+# def derive_opus_file(flac_path: Path, bitrate: str = "192k") -> Path:
+#    """Derives deterministic Opus audio using serial number calculated from input FLAC MD5 hash."""
+#    opus_path = flac_path.with_suffix(".opus")
+#    if not opus_path.exists() or opus_path.stat().st_size == 0:
+#        if not shutil.which("opusenc"):
+#            raise RuntimeError("opusenc command-line tool not found in PATH.")
+#
+#        kbps = bitrate.replace("k", "")
+#        flac_md5 = hashlib.md5(flac_path.read_bytes()).hexdigest()
+#        serial_num = int(flac_md5[:8], 16) & 0xFFFFFFFF
+#
+#        cmd = [
+#            "opusenc",
+#            "--quiet",
+#            "--bitrate",
+#            kbps,
+#            "--serial",
+#            str(serial_num),
+#            str(flac_path),
+#            str(opus_path),
+#        ]
+#        try:
+#            subprocess.run(cmd, check=True, capture_output=True, text=True)
+#        except subprocess.CalledProcessError as e:
+#            print(f"  ! opusenc Error for {flac_path.name}:\n{e.stderr}")
+#            if opus_path.exists():
+#                opus_path.unlink()
+#            raise e
+#    return opus_path
+#
 
 def determine_file_key(file_path: Path, rel: Release) -> str:
     """Determines relative IA file key, preserving folder structure for multi-file items."""
@@ -143,6 +143,7 @@ def delete_local_release(rel: Release) -> None:
             shutil.rmtree(target)
         elif target.is_file():
             target.unlink(missing_ok=True)
+            target.with_suffix(".opus").unlink(missing_ok=True)
             if rel.cover_path and rel.cover_path.exists():
                 rel.cover_path.unlink(missing_ok=True)
     except Exception as e:
