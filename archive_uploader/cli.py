@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import shutil
 from pathlib import Path
 
 from .enrichment import enrich
@@ -186,6 +187,11 @@ def main() -> None:
         ),
     )
 
+    parser.add_argument("--qobuz", nargs="+", metavar="ID_OR_URL",
+                        help="Download these Qobuz albums via kabooz, then upload them")
+    parser.add_argument("--quality", default=None,
+                        help="kabooz quality for --qobuz (default: kabooz config)")
+
     args = parser.parse_args()
 
     root_path = Path(args.root).resolve()
@@ -193,19 +199,26 @@ def main() -> None:
     # Force exclusive SQLite persistence engine
     state = SQLiteStateStore()
 
-    stage(
-        1,
-        5,
-        "Scanning",
-        str(root_path),
-    )
+    staging: list[Path] = []
 
-    print(
-        "  → Discovering FLAC releases "
-        "and reading local tags"
-    )
+    if args.qobuz:
+        from .sources.kabooz import fetch_album
 
-    releases = scan_directory(root_path)
+        stage(1, 5, "Qobuz download", f"{len(args.qobuz)} album(s) via kabooz")
+        releases = []
+        for ref in args.qobuz:
+            try:
+                got = fetch_album(ref, state, args.quality)
+            except Exception as e:
+                print(f"  ! {ref}: {e}")
+                continue
+            if got:
+                releases.append(got[0])
+                staging.append(got[1])
+    else:
+        stage(1, 5, "Scanning", str(root_path))
+        print("  → Discovering FLAC releases and reading local tags")
+        releases = scan_directory(root_path)
 
     if not releases:
         print("No FLAC releases or folders found.")
@@ -325,7 +338,7 @@ def main() -> None:
                 args.collection,
                 args.mediatype,
                 args.dry_run,
-                args.delete_after_upload,
+                args.delete_after_upload or bool(args.qobuz),
                 state,
             )
 
@@ -335,6 +348,11 @@ def main() -> None:
             "Local files preserved. Exiting..."
         )
         sys.exit(0)
+
+    if not args.dry_run:
+        for d in staging:
+            if not any(d.rglob("*.flac")):
+                shutil.rmtree(d, ignore_errors=True)
 
     print("\nBatch processing completed.")
 
