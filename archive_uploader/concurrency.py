@@ -25,8 +25,8 @@ def opus_workers() -> int:
 
 
 def upload_workers() -> int:
-    """Concurrent IA file uploads (after the first file creates the item)."""
-    return 4 if _AGGRESSIVE else 1
+    """Concurrent IA file uploads (kept low: IA throttles fast/new accounts)."""
+    return 2 if _AGGRESSIVE else 1
 
 
 def enrich_workers() -> int:

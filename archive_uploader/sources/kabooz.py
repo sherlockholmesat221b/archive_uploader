@@ -7,13 +7,14 @@ exactly one login/session for both downloading and enrichment.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional, Tuple
 
 from ..config import TEMP_DIR
 from ..enrichment.qobuz import _get_session
 from ..models import Release
-from ..scanning import scan_directory
+from ..scanning import detect_cover, scan_directory
 
 
 def fetch_album(
@@ -62,6 +63,17 @@ def fetch_album(
     if not releases:
         raise RuntimeError(f"{title}: no FLAC files found after download")
     rel = releases[0]
+
+    # kabooz nests files (e.g. <Album title>/01.flac). Point the release at the
+    # innermost common folder so IA keys stay flat ("01.flac", "cover.jpg",
+    # "CD 1/01.flac" for multi-disc) -- same as a hand-organised folder.
+    parents = {t.path.parent for t in rel.tracks if t.path}
+    if parents:
+        album_dir = Path(os.path.commonpath([str(p) for p in parents]))
+        if album_dir.is_dir() and album_dir != rel.dir_or_file:
+            rel.dir_or_file = album_dir
+            rel.cover_path = None
+            detect_cover(rel)  # re-find cover.jpg in the real album dir
     rel.upc = rel.upc or upc  # exact-match key for the Qobuz enrichment provider
     rel.provider_ids["Qobuz"] = album_id  # used by upload_release() for qobuz_id dedupe
     return rel, stage
