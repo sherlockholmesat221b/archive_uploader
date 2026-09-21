@@ -121,7 +121,7 @@ class SQLiteStateStore:
         artist: str = "",
         title: str = "",
         status: str = "completed",
-        script_version: str = "1.3.3",
+        script_version: str = "2.1.2",
         script_hash: str = "custom",
         qobuz_raw: Optional[dict] = None,
         mb_raw: Optional[dict] = None,
