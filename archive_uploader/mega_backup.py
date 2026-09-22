@@ -119,7 +119,8 @@ def mega_backup_release(rel: Release, remote_root: str = REMOTE_ROOT) -> bool:
             print(result.stdout, end="")
 
         if result.returncode != 0:
-            out_lines = [l for l in (result.stdout or "").splitlines() if "ERROR:" in l]
+            combined = (result.stdout or "") + "\n" + (result.stderr or "")
+            out_lines = [l for l in combined.splitlines() if "ERROR:" in l]
             # megacopy has no "skip if already uploaded" mode -- it hard-errors
             # on any pre-existing remote file. A retry after any real progress
             # (or a second manual run) will ALWAYS hit this for every file
