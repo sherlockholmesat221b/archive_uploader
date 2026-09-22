@@ -119,9 +119,19 @@ def mega_backup_release(rel: Release, remote_root: str = REMOTE_ROOT) -> bool:
             print(result.stdout, end="")
 
         if result.returncode != 0:
-            err = (result.stderr or "").strip()
-            print(f"  ! mega.nz backup failed (exit {result.returncode}){': ' + err if err else ''}")
-            return False
+            out_lines = [l for l in (result.stdout or "").splitlines() if "ERROR:" in l]
+            # megacopy has no "skip if already uploaded" mode -- it hard-errors
+            # on any pre-existing remote file. A retry after any real progress
+            # (or a second manual run) will ALWAYS hit this for every file
+            # that made it up last time, so treat "already exists" as the
+            # success it actually represents rather than a failure to retry.
+            if out_lines and all("already exists" in l.lower() for l in out_lines):
+                info(f"· {len(out_lines)} file(s) already on mega.nz from an earlier attempt "
+                    "-- treating backup as complete.", 2)
+            else:
+                err = (result.stderr or "").strip()
+                print(f"  ! mega.nz backup failed (exit {result.returncode}){': ' + err if err else ''}")
+                return False
 
         print("  ✓ mega.nz backup complete.")
         return True
