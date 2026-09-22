@@ -231,10 +231,14 @@ class QobuzStages(Stages):
 
     # ----------------------------------------------------------------- mega
     def mega(self, job, part, ctx):
-        from ..mega_backup import mega_backup_release
+        from ..mega_backup import mega_backup_release, REMOTE_ROOT
         rel = self._rel_for_part(job, part)
         before = sum(t.path.stat().st_size for t in rel.tracks if t.path and t.path.exists())
-        ok = mega_backup_release(rel, remote_root=job["opts"].get("mega_root", "/archive_uploader_backups"))
+        # Only override remote_root if the job explicitly set one -- otherwise
+        # use mega_backup.py's own REMOTE_ROOT (I previously hardcoded a
+        # fallback here that was missing the "/Root" prefix megatools needs;
+        # don't repeat that mistake by guessing a default again).
+        ok = mega_backup_release(rel, remote_root=job["opts"].get("mega_root") or REMOTE_ROOT)
         if not ok:
             raise RuntimeError("mega_backup_release() reported failure (see log for the mega.nz error)")
         ctx.progress(before)
