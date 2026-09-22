@@ -19,7 +19,7 @@ FATAL_UPLOAD_ERRORS = (
 )
 
 
-def get_expected_file_keys(rel: Release) -> Set[str]:
+def get_expected_file_keys(rel: Release, make_zips: bool = True) -> Set[str]:
     """Calculates full expected remote file manifest (every FLAC, every Opus, and ZIPs)."""
     expected = set()
 
@@ -48,7 +48,7 @@ def get_expected_file_keys(rel: Release) -> Set[str]:
         or len(flac_list) <= 1
     )
 
-    if not is_single:
+    if not is_single and make_zips:
         base = f"{rel.artist} {rel.title}".strip() or rel.dir_or_file.name
         slug_name = slugify(base)
         expected.add(f"{slug_name}-flac-complete.zip")
@@ -114,6 +114,7 @@ def upload_release(
     delete_after: bool = False,
     state: Optional[CombinedStateStore] = None,
     opus_bitrate: str = "192k",
+    make_zips: bool = True,
 ) -> None:
     """Executes pre-checks against local state (SQLite + cross-device log) and live IA manifests before processing."""
     store = state or CombinedStateStore()
@@ -121,7 +122,7 @@ def upload_release(
     base = f"{rel.artist} {rel.title}".strip() or rel.dir_or_file.name
     id_hash = hashlib.md5(base.encode("utf-8")).hexdigest()[:8]
     identifier = rel.identifier or resolve_identifier(base, id_hash, store)
-    expected_keys = get_expected_file_keys(rel)
+    expected_keys = get_expected_file_keys(rel, make_zips=make_zips)
     qobuz_id = rel.provider_ids.get("Qobuz", "")
 
     print(f"  → IA target: {identifier}")
@@ -176,7 +177,7 @@ def upload_release(
     print("  → Building IA payload, deriving Opus, and packaging archives")
     identifier, metadata, files_dict, temp_cleanup_files = build_ia_payload(
         rel, collection, mediatype, known_identifiers=store, opus_bitrate=opus_bitrate,
-        identifier=identifier,
+        identifier=identifier, make_zips=make_zips,
     )
 
     # Filter out files that already exist on IA

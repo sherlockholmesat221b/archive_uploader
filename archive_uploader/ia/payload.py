@@ -142,6 +142,7 @@ def build_ia_payload(
     known_identifiers: Optional[Any] = None,
     opus_bitrate: str = "192k",
     identifier: Optional[str] = None,
+    make_zips: bool = True,
 ) -> Tuple[str, dict, Dict[str, str], List[Path]]:
     """Builds Internet Archive payload metadata and target file map."""
     base = f"{rel.artist} {rel.title}".strip() or rel.dir_or_file.name
@@ -224,7 +225,7 @@ def build_ia_payload(
     flac_zip_name = f"{slug_name}-flac-complete.zip"
     opus_zip_name = f"{slug_name}-opus-complete.zip"
 
-    if not is_single:
+    if not is_single and make_zips:
         temp_zip_dir = Path(tempfile.gettempdir()) / "archive_uploader_zips"
         temp_zip_dir.mkdir(exist_ok=True)
 
@@ -251,8 +252,10 @@ def build_ia_payload(
 
         files_dict[flac_zip_name] = str(flac_zip_path)
         files_dict[opus_zip_name] = str(opus_zip_path)
-    else:
+    elif is_single:
         print("   ℹ️  Single detected: Skipping ZIP archive creation.")
+    else:
+        print("   ℹ️  Multi-part release: Skipping ZIP archive creation (parts.py zip_ok=False).")
 
     if rel.kind == "album" and rel.tracks and not is_single:
         desc.append("<br><b>Tracklist:</b><br><ol>")

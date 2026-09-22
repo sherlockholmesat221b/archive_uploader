@@ -2,6 +2,15 @@
 Part-wise kabooz fetching (plan_release + fetch_part). Sits beside sources/kabooz.py,
 whose whole-album fetch_album() is left untouched.
 
+Each Part stages into its OWN subfolder (stage_dir/part-N/), never a shared
+album folder. This is deliberate: the daemon can have more than one Part of
+the same release in flight at once (download running ahead of upload/mega
+per the scheduler's max_ahead prefetch), and a shared folder would let a
+still-downloading Part's files get scanned into another Part's Release, or
+get deleted by another Part's cleanup. Per-Part folders make that
+impossible by construction, at the cost of re-fetching the small cover file
+per Part instead of sharing it.
+
 Reuses the lazily-created QobuzSession from enrichment/qobuz.py (one login for
 downloading and enrichment). fetch_part() needs kabooz's download_album(track_ids=...).
 """
@@ -27,7 +36,15 @@ def _sess():
 
 
 def stage_dir(album_id: str) -> Path:
+    """The release's overall staging root -- holds one part-N/ subfolder per
+    Part currently in flight for this release. Never written to directly."""
     return TEMP_DIR / "kabooz" / album_id
+
+
+def part_dir(album_id: str, index: int) -> Path:
+    """Where exactly one Part's files live. Nothing outside fetch_part(),
+    _rel_for_part() and clear_part() should ever touch this path."""
+    return stage_dir(album_id) / f"part-{index}"
 
 
 def plan_release(
@@ -56,22 +73,23 @@ def fetch_part(
     on_track: Optional[Callable] = None,
 ) -> Tuple[Release, Path]:
     """
-    Download exactly the tracks in `part` into the album's staging dir and
-    return (Release, staging_dir). The Release only contains this Part's
-    tracks, but rel.dir_or_file is always the ALBUM ROOT, so IA file keys
-    ("Disc 2/01.flac") are identical no matter which Part produced them.
+    Download exactly the tracks in `part` into this Part's OWN subfolder and
+    return (Release, part staging dir). rel.dir_or_file is that Part's album
+    root (not the release-wide stage_dir), so IA file keys ("Disc 2/01.flac")
+    come out identical regardless of which Part produced them, while two
+    Parts' files can never collide on disk.
 
     Goodies (booklets) are off by default, matching fetch_album(). Raises if
     any track failed, so a partial Part is never uploaded.
     """
     sess = _sess()
-    stage = stage_dir(album_id)
-    (stage / "album").mkdir(parents=True, exist_ok=True)  # .part files survive retries
+    pdir = part_dir(album_id, part.index)
+    (pdir / "album").mkdir(parents=True, exist_ok=True)  # .part files survive retries
 
     res = sess.download_album(
         album_id,
         quality=sess.resolve_quality(quality),
-        dest_dir=stage / "album",
+        dest_dir=pdir / "album",
         save_cover_file=True,
         download_goodies=goodies,
         track_ids=part.track_ids,
@@ -80,7 +98,7 @@ def fetch_part(
     if res.failed:
         raise RuntimeError(f"{part.label}: {len(res.failed)} track(s) failed: {res.failed}")
 
-    releases = scan_directory(stage)
+    releases = scan_directory(pdir)
     if not releases:
         raise RuntimeError(f"{part.label}: no FLAC files found after download")
     rel = releases[0]
@@ -99,22 +117,16 @@ def fetch_part(
 
     rel.upc = rel.upc or (getattr(album, "upc", "") or "")
     rel.provider_ids["Qobuz"] = album_id
-    return rel, stage
+    return rel, pdir
 
 
-def clear_part(album_id: str, part: Part) -> None:
-    """Delete this Part's audio (and derived opus) but keep the staging root
-    and cover so the next Part lands in the same album folder."""
-    stage = stage_dir(album_id)
-    for p in stage.rglob("*"):
-        if p.is_file() and p.suffix.lower() in (".flac", ".opus", ".part"):
-            p.unlink(missing_ok=True)
-    for d in sorted((p for p in stage.rglob("*") if p.is_dir()), reverse=True):
-        try:
-            d.rmdir()  # only removes now-empty disc dirs
-        except OSError:
-            pass
+def clear_part(album_id: str, index: int) -> None:
+    """Delete exactly this Part's subfolder. Other in-flight Parts of the
+    same release (in their own part-N/ folders) are untouched."""
+    shutil.rmtree(part_dir(album_id, index), ignore_errors=True)
 
 
 def cleanup_release(album_id: str) -> None:
+    """Removes the whole release staging root, including any part-N/
+    subfolders somehow still left over (e.g. a cancelled job)."""
     shutil.rmtree(stage_dir(album_id), ignore_errors=True)

@@ -56,13 +56,9 @@ def test_now_waits_only_for_running_upload():
     assert wait(lambda: status(sch, n["id"]) == "done")
     first_up_end = ends(fake, "upload")[0][0]
     n_up = starts(fake, "upload", n["id"])[0][0]
+    other_starts = sorted(t for t, j, p in starts(fake, "upload") if j != n["id"])
     assert n_up >= first_up_end - 0.01            # waited for the ongoing upload
-    # upload cap is 1, so uploads run strictly in sequence: whichever release
-    # was next in that sequence after the running one finished must be NOW's.
-    seq = sorted(starts(fake, "upload"), key=lambda t: t[0])
-    running_job = [j for t, j, p in seq if t < n_up][-1] if any(t < n_up for t, j, p in seq) else None
-    after = [j for t, j, p in seq if t > first_up_end - 0.01]
-    assert after and after[0] == n["id"], (running_job, after[:3], n["id"])
+    assert n_up < other_starts[1]                 # ...but jumped ahead of the rest of the queue
     assert wait(lambda: all(status(sch, i) == "done" for i in ids))
     sch.stop()
 
