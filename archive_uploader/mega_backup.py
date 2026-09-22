@@ -100,7 +100,9 @@ def mega_backup_release(rel: Release, remote_root: str = REMOTE_ROOT) -> bool:
             result = subprocess.run(
                 ["megacopy", *auth, "--no-ask-password",
                  "--local", str(target), "--remote", remote_dir],
+                capture_output=True, text=True,
             )
+            print(result.stdout, end="")
         else:
             if not shutil.which("megaput"):
                 print("  ! megaput not found on PATH — cannot upload a single file.")
@@ -112,10 +114,13 @@ def mega_backup_release(rel: Release, remote_root: str = REMOTE_ROOT) -> bool:
             result = subprocess.run(
                 ["megaput", *auth, "--no-ask-password",
                  "--path", remote_dir + "/", *files],
+                capture_output=True, text=True,
             )
+            print(result.stdout, end="")
 
         if result.returncode != 0:
-            print(f"  ! mega.nz backup failed (exit {result.returncode})")
+            err = (result.stderr or "").strip()
+            print(f"  ! mega.nz backup failed (exit {result.returncode}){': ' + err if err else ''}")
             return False
 
         print("  ✓ mega.nz backup complete.")
