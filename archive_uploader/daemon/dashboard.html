@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Archive uploader</title>
+<style>
+:root{--bg:#fff;--fg:#1c1c1e;--mut:#6b6b70;--card:#f4f4f6;--line:#dcdce0;--acc:#2563eb;--ok:#16a34a;--bad:#dc2626;--warn:#d97706}
+@media(prefers-color-scheme:dark){:root{--bg:#141416;--fg:#e8e8ea;--mut:#9a9aa2;--card:#1e1e22;--line:#33333a;--acc:#5b8def;--ok:#3ecf6b;--bad:#f0605d;--warn:#f0a53a}}
+*{box-sizing:border-box}body{margin:0;font:14px/1.4 system-ui,sans-serif;background:var(--bg);color:var(--fg);padding:10px;max-width:1200px;margin:auto}
+h2{font-size:15px;margin:18px 0 8px}header{display:flex;gap:8px;align-items:center;flex-wrap:wrap}header h1{font-size:17px;margin:0;flex:1}
+button,select,input,textarea{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:4px 8px}
+button{cursor:pointer}button.pri{background:var(--acc);color:#fff;border-color:var(--acc)}button.sm{padding:1px 6px;font-size:12px}
+textarea{width:100%;min-height:70px;font-family:ui-monospace,monospace}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:8px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px}
+.card h3{margin:0 0 4px;font-size:13px;display:flex;justify-content:space-between;text-transform:uppercase;letter-spacing:.04em}
+.big{font-size:22px;font-weight:600}.mut{color:var(--mut)}.sm{font-size:12px}
+.task{font-size:12px;border-top:1px dashed var(--line);padding:3px 0;word-break:break-word}
+.pill{display:inline-block;border-radius:10px;padding:0 7px;font-size:11px;border:1px solid var(--line)}
+.s-active,.s-planning,.s-expanding{color:var(--acc)}.s-done{color:var(--ok)}.s-failed,.s-cancelled{color:var(--bad)}.s-queued{color:var(--mut)}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:4px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;color:var(--mut);font-weight:500}.wrap{overflow-x:auto}
+.bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;min-width:70px}.bar i{display:block;height:100%;background:var(--acc)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0}
+canvas{width:100%;height:150px;display:block}
+.child td:first-child{padding-left:20px}.parts{background:var(--card)}
+label.chk{display:inline-flex;gap:4px;align-items:center}
+</style>
+</head>
+<body>
+<header>
+  <h1>Archive uploader</h1>
+  <span class="mut sm" id="disk"></span>
+  <button id="pauseAll" onclick="pauseAll()">Pause all</button>
+</header>
+
+<h2>Lanes</h2>
+<div class="grid" id="lanes"></div>
+
+<h2>Add to queue</h2>
+<div class="card">
+  <textarea id="refs" placeholder="One per line: Qobuz album URL/ID, artist URL (or artist:ID), or a local folder path"></textarea>
+  <div class="row">
+    <select id="prio"><option value="0">NOW</option><option value="1">high</option><option value="2" selected>normal</option><option value="3">low</option></select>
+    <label class="chk"><input type="checkbox" id="oOpus" checked>opus</label>
+    <label class="chk"><input type="checkbox" id="oMega">mega</label>
+    <label class="chk">artist window <input type="number" id="oWin" min="1" style="width:56px" placeholder="auto"></label>
+    <button class="pri" onclick="addJobs()">Add</button><span class="mut sm" id="addMsg"></span>
+  </div>
+</div>
+
+<h2>Queue</h2>
+<div class="card wrap"><table id="jobs"><thead><tr>
+<th>#</th><th>Job</th><th>Priority</th><th>Status</th><th>Progress</th><th></th></tr></thead><tbody></tbody></table></div>
+
+<h2>Statistics</h2>
+<div class="row">
+  <select id="stStage"><option>upload</option><option>download</option><option>opus</option><option>mega</option></select>
+  <select id="stRange"><option value="3600">1 h</option><option value="21600">6 h</option><option value="86400" selected>24 h</option><option value="604800">7 d</option><option value="0">all</option></select>
+  <span class="mut sm">MB/s = bytes ÷ seconds the lane was busy. Raw data; nothing is smoothed or tuned.</span>
+</div>
+<div class="grid">
+  <div class="card"><h3>Throughput over time</h3><canvas id="cSeries"></canvas><div class="mut sm" id="seriesNote"></div></div>
+  <div class="card"><h3>By hour of day (local)</h3><canvas id="cHod"></canvas></div>
+  <div class="card"><h3>By weekday (Sun–Sat)</h3><canvas id="cDow"></canvas></div>
+</div>
+<div class="card wrap" style="margin-top:8px"><table id="totals"><thead><tr><th>Stage</th><th>Units</th><th>Failed</th><th>Bytes</th><th>Busy</th><th>Avg MB/s</th></tr></thead><tbody></tbody></table></div>
+<h2>Events</h2>
+<div class="card wrap sm" id="events"></div>
+
+<h2>Settings</h2>
+<div class="card"><div class="row" id="settings"></div><button class="pri" onclick="saveSettings()">Save</button> <span class="mut sm" id="setMsg"></span></div>
+
+<script>
+const $=s=>document.querySelector(s);
+const TOKEN=new URLSearchParams(location.search).get('token')||sessionStorage.tok||'';if(TOKEN)sessionStorage.tok=TOKEN;
+const api=(p,body)=>fetch('/api'+p,{method:body===undefined?'GET':'POST',headers:{'content-type':'application/json','X-Token':TOKEN},body:body===undefined?undefined:JSON.stringify(body)}).then(r=>r.json());
+const PRIO=['NOW','high','normal','low'];
+const gb=n=>(n/1073741824).toFixed(n>=1e10?0:1)+' GB',mb=n=>(n/1e6).toFixed(1);
+const dur=s=>{s=Math.round(s);return s>=3600?Math.floor(s/3600)+'h'+String(Math.floor(s%3600/60)).padStart(2,'0')+'m':s>=60?Math.floor(s/60)+'m'+String(s%60).padStart(2,'0')+'s':s+'s'};
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let S=null,open=new Set(),partsCache={},settingsLoaded=false;
+
+async function pauseAll(){await api('/pause',{lane:'all',on:!S.paused_all});refresh()}
+async function pauseLane(l,on){await api('/pause',{lane:l,on});refresh()}
+async function brk(l,mins){await api('/break',{lane:l,seconds:mins*60});refresh()}
+async function addJobs(){
+  const w=$('#oWin').value;
+  const b={refs:$('#refs').value,priority:+$('#prio').value,opus:$('#oOpus').checked,mega:$('#oMega').checked};
+  if(w)b.window=+w;
+  const r=await api('/jobs',b);$('#addMsg').textContent=r.length+' added'+(r.some(x=>x.duplicate)?' (some already queued)':'');
+  $('#refs').value='';refresh();
+}
+async function act(id,a,body){await api(`/jobs/${id}/${a}`,body||{});refresh()}
+
+function renderLanes(){
+  $('#pauseAll').textContent=S.paused_all?'Resume all':'Pause all';
+  $('#disk').textContent=S.disk.free?'disk free '+gb(S.disk.free):'';
+  const now=S.now;
+  $('#lanes').innerHTML=['download','opus','upload','mega','plan'].map(l=>{
+    const L=S.lanes[l],brkLeft=L.break_until-now;
+    const tasks=L.running.map(t=>`<div class="task">${t.express?'⚡ ':''}<b>${esc(t.title)}</b> ${esc(t.part)}<br><span class="mut">${mb(t.bytes)} MB · ${t.mbps.toFixed(1)} MB/s · ${dur(t.elapsed)}</span></div>`).join('')||'<div class="task mut">idle</div>';
+    const st=L.paused?'<span class="pill s-failed">paused</span>':brkLeft>0?`<span class="pill s-planning">break ${dur(brkLeft)}</span>`:'';
+    return `<div class="card"><h3><span>${l==='upload'?'IA upload':l}</span>${st}</h3>
+      <div class="big">${L.mbps_1m.toFixed(1)} <span class="sm mut">MB/s (1 min)</span></div>
+      <div class="sm mut">${L.running.length} running · cap ${L.cap}${L.express?' +'+L.express+' ⚡':''} · ${gb(L.total_bytes)} this run</div>
+      ${L.waiting?`<div class="sm" style="color:var(--warn)">waiting: ${esc(L.waiting)}</div>`:''}
+      ${tasks}
+      <div class="row"><button class="sm" onclick="pauseLane('${l}',${!L.paused})">${L.paused?'Resume':'Pause'}</button>
+      ${l==='upload'||l==='download'?`<button class="sm" onclick="brk('${l}',15)">Break 15m</button><button class="sm" onclick="brk('${l}',60)">1h</button>${brkLeft>0?`<button class="sm" onclick="brk('${l}',0)">End break</button>`:''}`:''}</div></div>`}).join('');
+}
+function jobRow(j,child){
+  const pct=j.parts_total?Math.round(100*(j.parts_done)/j.parts_total):(j.status==='done'?100:0);
+  const up=j.parts_total?` · IA ${j.parts_uploaded}/${j.parts_total}`:'';
+  let prog='';
+  if(j.kind==='artist'||j.kind==='folder')prog=`${j.meta.created||0}/${j.meta.total??'?'} albums started · ${j.children_left} waiting`;
+  else if(j.parts_total)prog=`<div class="bar"><i style="width:${pct}%"></i></div><span class="sm mut">${j.parts_done}/${j.parts_total} parts${up}${j.est_bytes?' · '+gb(j.est_bytes):''}<br>${esc(j.where)}</span>`;
+  else if(j.meta.note)prog=`<span class="sm mut">${esc(j.meta.note)}</span>`;
+  const psel=`<select onchange="act(${j.id},'priority',{priority:+this.value})">${PRIO.map((p,i)=>`<option value="${i}" ${i===j.priority?'selected':''}>${p}</option>`).join('')}</select>`;
+  const fin=['done','failed','cancelled'].includes(j.status);
+  const btns=(fin?'':`<button class="sm" onclick="act(${j.id},'cancel')">cancel</button> `)+(j.status==='failed'||j.status==='cancelled'?`<button class="sm" onclick="act(${j.id},'retry')">retry</button> `:'')+(fin?`<button class="sm" onclick="act(${j.id},'remove')">×</button>`:'');
+  return `<tr class="${child?'child':''}"><td>${j.id}</td><td><a href="#" onclick="tog(${j.id});return false"><b>${esc(j.title||j.ref)}</b></a><div class="sm mut">${j.kind} · ${esc(j.ref)}</div>${j.error?`<div class="sm" style="color:var(--bad)">${esc(j.error)}</div>`:''}</td><td>${psel}</td><td class="s-${j.status}">${j.status}</td><td>${prog}</td><td>${btns}</td></tr>`
+   +(open.has(j.id)&&partsCache[j.id]?`<tr class="parts"><td></td><td colspan="5">${partsCache[j.id]}</td></tr>`:'');
+}
+async function tog(id){if(open.has(id)){open.delete(id)}else{open.add(id);await loadParts(id)}renderJobs()}
+async function loadParts(id){
+  const r=await api('/job/'+id);
+  partsCache[id]=r.parts.length?`<table>${r.parts.map(p=>`<tr><td>${esc(p.label)}</td><td>${p.stage}${p.status!=='pending'?' ('+p.status+')':''}</td><td>${p.uploaded?'on IA':''}</td><td>${gb(p.bytes||p.est_bytes)}</td><td class="sm" style="color:var(--bad)">${esc(p.error)}</td></tr>`).join('')}</table>`:'<span class="mut sm">no parts yet</span>';
+}
+function renderJobs(){
+  const byP={};S.jobs.forEach(j=>{(byP[j.parent_id||0]=byP[j.parent_id||0]||[]).push(j)});
+  const ids=new Set(S.jobs.map(j=>j.id));
+  const roots=S.jobs.filter(j=>!j.parent_id||!ids.has(j.parent_id)).sort((a,b)=>{const fa=['done','failed','cancelled'].includes(a.status),fb=['done','failed','cancelled'].includes(b.status);return fa-fb||a.priority-b.priority||a.id-b.id});
+  let h='';roots.forEach(j=>{h+=jobRow(j,false);(byP[j.id]||[]).sort((a,b)=>a.id-b.id).forEach(c=>h+=jobRow(c,true))});
+  $('#jobs tbody').innerHTML=h||'<tr><td colspan="6" class="mut">queue is empty</td></tr>';
+}
+
+/* ---- charts (canvas, no libs) ---- */
+function bars(cv,vals,labels,unit){
+  const dpr=devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;cv.width=w*dpr;cv.height=h*dpr;
+  const c=cv.getContext('2d');c.scale(dpr,dpr);c.clearRect(0,0,w,h);
+  const cs=getComputedStyle(document.body),acc=cs.getPropertyValue('--acc'),mut=cs.getPropertyValue('--mut');
+  if(!vals.length){c.fillStyle=mut;c.fillText('no data yet',8,20);return}
+  const max=Math.max(...vals,0.001),pad=18,bw=(w-30)/vals.length;
+  c.fillStyle=mut;c.font='10px system-ui';c.fillText(max.toFixed(1)+' MB/s',2,10);
+  vals.forEach((v,i)=>{const bh=(h-pad-14)*v/max;c.fillStyle=acc;c.fillRect(28+i*bw,h-pad-bh,Math.max(1,bw-1),bh);
+    if(labels[i]!==undefined&&(vals.length<=24||i%Math.ceil(vals.length/8)===0)){c.fillStyle=mut;c.fillText(labels[i],28+i*bw,h-4)}});
+}
+async function stats(){
+  const st=$('#stStage').value,rg=$('#stRange').value;
+  const r=await api(`/stats?stage=${st}&range=${rg}`);
+  const f=t=>{const d=new Date(t*1000);return rg>86400||rg==0?`${d.getMonth()+1}/${d.getDate()}`:`${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`};
+  bars($('#cSeries'),r.series.map(x=>x.mbps),r.series.map(x=>f(x.t)));
+  $('#seriesNote').textContent=`bucket ${dur(r.bucket)} · ${r.series.length} buckets`;
+  bars($('#cHod'),r.hod.map(x=>x.mbps),r.hod.map(x=>x.k));
+  const D=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];bars($('#cDow'),r.dow.map(x=>x.mbps),r.dow.map(x=>D[+x.k]));
+  $('#totals tbody').innerHTML=r.totals.map(t=>`<tr><td>${t.stage}</td><td>${t.units}</td><td>${t.units-t.ok}</td><td>${gb(t.bytes)}</td><td>${dur(t.busy_s)}</td><td>${t.mbps.toFixed(2)}</td></tr>`).join('')||'<tr><td colspan="6" class="mut">no completed work yet</td></tr>';
+  const ev=await api('/events?limit=30');
+  $('#events').innerHTML=ev.map(e=>`<div>${new Date(e.ts*1000).toLocaleString()} · <b>${e.stage}</b> ${esc(e.kind)}${e.job_id?' #'+e.job_id:''} ${esc(e.detail)}</div>`).join('')||'<span class="mut">no events</span>';
+}
+$('#stStage').onchange=$('#stRange').onchange=stats;
+
+/* ---- settings ---- */
+const FIELDS=[
+ ['download workers',s=>s.lanes.download.cap,(s,v)=>s.lanes={download:{cap:v}}],
+ ['opus workers',s=>s.lanes.opus.cap,(s,v)=>s.lanes={opus:{cap:v}}],
+ ['IA concurrent releases',s=>s.lanes.upload.cap,(s,v)=>s.lanes={upload:{cap:v}}],
+ ['mega workers',s=>s.lanes.mega.cap,(s,v)=>s.lanes={mega:{cap:v}}],
+ ['artist/folder window',s=>s.artist_window,(s,v)=>s.artist_window=v],
+ ['parts ahead / release',s=>s.max_ahead,(s,v)=>s.max_ahead=v],
+ ['max staged GB',s=>s.max_staged_bytes/2**30,(s,v)=>s.max_staged_bytes=v*2**30],
+ ['min free GB',s=>s.min_free_bytes/2**30,(s,v)=>s.min_free_bytes=v*2**30],
+ ['preempt IA up to priority',s=>s.ia_preempt_max_priority,(s,v)=>s.ia_preempt_max_priority=v],
+ ['auto-break after GB',s=>s.auto_break.after_bytes/2**30,(s,v)=>s.auto_break={after_bytes:v*2**30}],
+ ['auto-break after min',s=>s.auto_break.after_s/60,(s,v)=>s.auto_break={after_s:v*60}],
+ ['auto-break length min',s=>s.auto_break.break_s/60,(s,v)=>s.auto_break={break_s:v*60}],
+ ['max retries',s=>s.max_retries,(s,v)=>s.max_retries=v],
+];
+function renderSettings(){
+  if(settingsLoaded)return;settingsLoaded=true;
+  $('#settings').innerHTML=FIELDS.map((f,i)=>`<label class="sm">${f[0]}<br><input type="number" step="any" min="0" id="set${i}" value="${+f[1](S.settings).toFixed(2)}" style="width:90px"></label>`).join('');
+}
+async function saveSettings(){
+  const patch={};FIELDS.forEach((f,i)=>{const p={};f[2](p,+$('#set'+i).value);
+    for(const k in p){if(typeof p[k]==='object'&&patch[k]&&typeof patch[k]==='object'){Object.assign(patch[k],p[k])}else if(typeof p[k]==='object'){patch[k]=p[k]}else patch[k]=p[k]}
+    if(p.lanes){patch.lanes=patch.lanes||{};Object.assign(patch.lanes,p.lanes)}});
+  await api('/settings',patch);$('#setMsg').textContent='saved';setTimeout(()=>$('#setMsg').textContent='',2000);
+}
+
+async function refresh(){
+  try{S=await api('/state');renderLanes();renderSettings();
+    for(const id of open)await loadParts(id);renderJobs();}catch(e){console.error(e)}
+}
+refresh();stats();setInterval(refresh,2500);setInterval(stats,15000);
+</script>
+</body>
+</html>

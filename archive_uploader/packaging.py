@@ -101,8 +101,9 @@ def create_clean_zip(
             zinfo = zipfile.ZipInfo(filename=arc_name, date_time=FIXED_ZIP_DATETIME)
             zinfo.external_attr = 0o644 << 16
             zinfo.compress_type = zipfile.ZIP_DEFLATED
-            with open(src_file, "rb") as f:
-                zf.writestr(zinfo, f.read())
+            zinfo.file_size = src_file.stat().st_size      # lets zipfile pick zip64 when needed
+            with open(src_file, "rb") as f, zf.open(zinfo, "w") as dst:
+                shutil.copyfileobj(f, dst, 1 << 20)
 
         if rel.kind == "album" and rel.dir_or_file.is_dir():
             album_dir = rel.dir_or_file
