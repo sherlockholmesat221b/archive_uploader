@@ -75,6 +75,9 @@ def main(argv=None):
         s.add_argument("--no-opus", action="store_true")
         s.add_argument("--window", type=int)
     sub.add_parser("status", parents=[common])
+    for name in ("retry", "cancel", "remove"):
+        s_ = sub.add_parser(name, parents=[common])
+        s_.add_argument("job_id", type=int)
     for name in ("pause", "resume"):
         s = sub.add_parser(name, parents=[common])
         s.add_argument("lane", nargs="?", default="all")
@@ -98,10 +101,13 @@ def main(argv=None):
                   + ("  PAUSED" if L["paused"] else "")
                   + (f"  break {int(L['break_until'] - st['now'])}s" if L["break_until"] > st["now"] else ""))
         for j in st["jobs"]:
-            if j["status"] in ("done", "failed", "cancelled"):
+            if j["status"] in ("done", "cancelled"):
                 continue
             print(f"#{j['id']:<4} p{j['priority']} {j['status']:10} {j['kind']:6} "
                   f"{(j['title'] or j['ref'])[:44]:44} {j['parts_done']}/{j['parts_total']} parts  {j['where']}")
+    elif a.cmd in ("retry", "cancel", "remove"):
+        r = _call(a, f"/jobs/{a.job_id}/{a.cmd}", {})
+        print(r)
     elif a.cmd in ("pause", "resume"):
         _call(a, "/pause", {"lane": a.lane, "on": a.cmd == "pause"})
     elif a.cmd == "break":

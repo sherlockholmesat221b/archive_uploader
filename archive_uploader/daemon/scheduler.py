@@ -600,7 +600,10 @@ class Scheduler:
                             "break_until": self.break_until.get(l, 0),
                             "waiting": self.waiting.get(l, ""), "mbps_1m": self._mbps(l),
                             "total_bytes": self.totals[l]}
-        jobs = self.db.q("SELECT * FROM jobs WHERE status NOT IN ('done','failed','cancelled') "
+        # failed jobs always show, regardless of age -- they need action.
+        # done/cancelled ones age out after 6h so the list doesn't fill with
+        # old noise once things are actually working.
+        jobs = self.db.q("SELECT * FROM jobs WHERE status NOT IN ('done','cancelled') "
                          "OR finished>? ORDER BY id DESC LIMIT 400", (now - 6 * 3600,))
         agg = {r["job_id"]: r for r in self.db.q(
             "SELECT job_id, COUNT(*) n, SUM(stage='done') done, SUM(uploaded) up, "
