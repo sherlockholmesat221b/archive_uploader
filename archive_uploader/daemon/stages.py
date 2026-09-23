@@ -210,7 +210,7 @@ class QobuzStages(Stages):
 
     # --------------------------------------------------------------- upload
     def upload(self, job, part, ctx):
-        from ..ia.uploader import get_expected_file_keys, upload_release
+        from ..ia.uploader import check_remote_manifest, get_expected_file_keys, upload_release
         rel = self._rel_for_part(job, part)
         rel.identifier = self._cache_identifier(job, rel, ctx)
         store = self._store()
@@ -226,6 +226,23 @@ class QobuzStages(Stages):
                        opus_bitrate=job["opts"].get("opus_bitrate", self.opus_bitrate),
                        make_zips=make_zips,
                        on_file_done=lambda key, nbytes, secs: ctx.progress(nbytes))
+
+        # upload_release() catches its own exceptions (fatal or not) and only
+        # prints them -- it never raises, and never returns anything either,
+        # so a completely failed upload (throttled, network error, item
+        # locked, whatever) looks identical to a successful one from here.
+        # Verify against IA directly rather than trusting a clean return, so
+        # a real failure gets retried at the Part level (with backoff) here
+        # instead of only being caught later, once, by finalize() -- after
+        # every other Part already thinks it's done.
+        is_complete, missing = check_remote_manifest(rel.identifier, keys)
+        if not is_complete:
+            ctx.event("upload_incomplete", f"{len(missing)}/{len(keys)} missing")
+            raise RuntimeError(
+                f"upload_release() returned without error but '{rel.identifier}' is still "
+                f"missing {len(missing)}/{len(keys)} expected file(s) on IA -- check the "
+                "daemon's terminal output around this Part for the real reason "
+                "(upload_release prints it but doesn't raise it)")
         return 0
 
     # ----------------------------------------------------------------- mega
