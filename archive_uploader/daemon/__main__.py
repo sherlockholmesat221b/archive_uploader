@@ -41,9 +41,7 @@ def serve(a):
         from .stages import QobuzStages
         stages = QobuzStages()
     sch = Scheduler(DB(a.db), stages, {"stage_path": os.path.dirname(os.path.abspath(a.db)) or "."})
-
-    import archive_uploader  # noqa: F401 — force full init before worker threads start
-
+    import archive_uploader  # noqa: F401 -- force full init before worker threads start
     sch.start()
     srv = make_server(sch, a.host, a.port, a.token or "")
     print(f"dashboard: http://{a.host}:{a.port}/" + (f"?token={a.token}" if a.token else ""), flush=True)

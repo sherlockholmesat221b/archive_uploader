@@ -218,31 +218,62 @@ class QobuzStages(Stages):
         keys = get_expected_file_keys(rel, make_zips=False)
         self._add_keys(job, keys, ctx)
 
-        before = sum(t.path.stat().st_size for t in rel.tracks if t.path and t.path.exists())
         # zip_ok is decided once at plan time (parts.py): True only for a
         # release small enough to be a single Part. A multi-Part release
         # must never build zips per-Part -- see the class docstring.
         make_zips = bool(job["meta"].get("zip_ok", False))
         upload_release(rel, self.collection, self.mediatype, state=store,
                        opus_bitrate=job["opts"].get("opus_bitrate", self.opus_bitrate),
-                       make_zips=make_zips)
-        ctx.progress(before)     # upload_release() has no progress callback; report as one unit
+                       make_zips=make_zips,
+                       on_file_done=lambda key, nbytes, secs: ctx.progress(nbytes))
         return 0
 
     # ----------------------------------------------------------------- mega
     def mega(self, job, part, ctx):
-        from ..mega_backup import mega_backup_release, REMOTE_ROOT
+        from .. import manifest
+        from ..mega_backup import mega_backup_release, mega_export_link, remote_dir_for, REMOTE_ROOT
         rel = self._rel_for_part(job, part)
         before = sum(t.path.stat().st_size for t in rel.tracks if t.path and t.path.exists())
-        # Only override remote_root if the job explicitly set one -- otherwise
-        # use mega_backup.py's own REMOTE_ROOT (I previously hardcoded a
-        # fallback here that was missing the "/Root" prefix megatools needs;
-        # don't repeat that mistake by guessing a default again).
-        ok = mega_backup_release(rel, remote_root=job["opts"].get("mega_root") or REMOTE_ROOT)
+        remote_root = job["opts"].get("mega_root") or REMOTE_ROOT
+        account = job["opts"].get("mega_account")
+
+        ok = mega_backup_release(rel, remote_root=remote_root, account=account)
         if not ok:
             raise RuntimeError("mega_backup_release() reported failure (see log for the mega.nz error)")
         ctx.progress(before)
+
+        remote_dir = remote_dir_for(rel, remote_root)
+        link = ""
+        if job["opts"].get("mega_link"):
+            link = mega_export_link(remote_dir, account)
+            if link:
+                ctx.event("mega_link", link)
+
+        identifier = job["meta"].get("identifier")
+        if identifier:
+            manifest.update_mega(identifier, mega_account=account, mega_path=remote_dir,
+                                mega_link=link or None)
+            if link:
+                self._append_mirror_link(identifier, link, ctx)
         return 0
+
+    def _append_mirror_link(self, identifier: str, link: str, ctx) -> None:
+        """Adds a 'Mirror (mega.nz): <link>' line to the IA item's description.
+        Idempotent (checks for the marker first) so a retry doesn't duplicate
+        it. Failure here is logged, not raised -- the mega backup and the
+        manifest row it just wrote are both real regardless of whether this
+        cosmetic step succeeds."""
+        try:
+            import internetarchive as ia
+            item = ia.get_item(identifier)
+            desc = item.metadata.get("description", "") or ""
+            marker = "Mirror (mega.nz):"
+            if marker in desc:
+                return
+            new_desc = f'{desc}<br><br>{marker} <a href="{link}" rel="nofollow">{link}</a>'
+            item.modify_metadata({"description": new_desc})
+        except Exception as e:                                # noqa: BLE001
+            ctx.event("mirror_link_failed", str(e))
 
     # ------------------------------------------------------------- cleanup
     def cleanup_part(self, job, part, ctx):
@@ -274,4 +305,8 @@ class QobuzStages(Stages):
         if hasattr(store, "mark_uploaded"):
             store.mark_uploaded(identifier=identifier, files=keys,
                                upc=job["meta"].get("upc") or "", qobuz_id=job["meta"]["album_id"])
+
+        from .. import manifest
+        manifest.record(identifier, title=job["title"], upc=job["meta"].get("upc") or "",
+                        qobuz_id=job["meta"]["album_id"], bytes_=job["meta"].get("est_total", 0))
         ctx.event("finalized", identifier)

@@ -73,6 +73,9 @@ def make_server(sch: Scheduler, host="127.0.0.1", port=8765, token: str = ""):
                     "totals": sch.db.totals(since)})
             if u.path == "/api/events":
                 return self._send(sch.db.events(int(qs.get("limit", ["100"])[0])))
+            if u.path == "/api/manifest":
+                from .. import manifest
+                return self._send(manifest.all_rows(int(qs.get("limit", ["500"])[0])))
             return self._send({"error": "not found"}, 404)
 
         def do_POST(self):
@@ -85,7 +88,8 @@ def make_server(sch: Scheduler, host="127.0.0.1", port=8765, token: str = ""):
                 refs = b.get("refs") or []
                 if isinstance(refs, str):
                     refs = refs.splitlines()
-                opts = {k: b[k] for k in ("opus", "mega", "window", "release_type", "quality") if k in b}
+                opts = {k: b[k] for k in ("opus", "mega", "window", "release_type", "quality",
+                                          "mega_account", "mega_link", "mega_root") if k in b}
                 return self._send(sch.add(refs, int(b.get("priority", 2)), opts))
             m = re.fullmatch(r"/api/jobs/(\d+)/(priority|cancel|retry|remove)", u.path)
             if m:

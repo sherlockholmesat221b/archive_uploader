@@ -5,7 +5,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Dict, Sequence
+from typing import Callable, Dict, Optional, Sequence
 
 import internetarchive as ia
 
@@ -115,11 +115,17 @@ def upload_ordered(
     files: Dict[str, str],
     metadata: dict,
     fatal: Sequence[str] = (),
+    on_file_done: Optional[Callable[[str, int, float], None]] = None,
 ) -> None:
     """Light files first, ZIPs last. The first file goes alone (it creates the
     item and carries the metadata); the rest go serially, or a few at a time
     with --aggressive. Raises on the first file that still fails; a re-run skips
-    whatever is already on IA (checksum=True)."""
+    whatever is already on IA (checksum=True).
+
+    on_file_done(key, size_bytes, seconds), if given, is called after each
+    file actually finishes uploading -- real per-file granularity (this is
+    genuinely as fine-grained as upload_ordered's own accounting gets; it
+    has no visibility into bytes sent mid-file)."""
     order = sorted(
         files.items(),
         key=lambda kv: (_priority(kv[0]), Path(kv[1]).stat().st_size),
@@ -130,7 +136,8 @@ def upload_ordered(
     counter = {"n": 0}
 
     def run(key, path, meta):
-        size_mb = Path(path).stat().st_size / (1024 * 1024)
+        size_bytes = Path(path).stat().st_size
+        size_mb = size_bytes / (1024 * 1024)
         if not parallel:
             _say(f"\n  [{counter['n'] + 1}/{total}] {key} ({size_mb:.1f} MB)")
         secs = _upload_one(identifier, key, path, meta, fatal, verbose=not parallel)
@@ -138,6 +145,8 @@ def upload_ordered(
             counter["n"] += 1
             if parallel:
                 print(f"  \u2713 [{counter['n']}/{total}] {key} ({size_mb:.1f} MB, {secs:.0f}s)")
+        if on_file_done:
+            on_file_done(key, size_bytes, secs)
 
     run(*order[0], metadata)  # creates the item + metadata
     rest = order[1:]

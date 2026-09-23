@@ -2,7 +2,7 @@
 
 import hashlib
 from pathlib import Path
-from typing import Optional, Set
+from typing import Callable, Optional, Set
 import internetarchive as ia
 
 from archive_uploader.ia.identifiers import resolve_identifier
@@ -115,6 +115,7 @@ def upload_release(
     state: Optional[CombinedStateStore] = None,
     opus_bitrate: str = "192k",
     make_zips: bool = True,
+    on_file_done: Optional[Callable[[str, int, float], None]] = None,
 ) -> None:
     """Executes pre-checks against local state (SQLite + cross-device log) and live IA manifests before processing."""
     store = state or CombinedStateStore()
@@ -222,7 +223,8 @@ def upload_release(
             )
 
         print(f"  → Uploading {len(files_dict)} file(s) to Internet Archive")
-        upload_ordered(identifier, files_dict, metadata, fatal=FATAL_UPLOAD_ERRORS)
+        upload_ordered(identifier, files_dict, metadata, fatal=FATAL_UPLOAD_ERRORS,
+                      on_file_done=on_file_done)
 
         print("   ✓ Upload complete.")
         if hasattr(store, "mark_uploaded"):

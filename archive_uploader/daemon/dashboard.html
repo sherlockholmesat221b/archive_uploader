@@ -44,11 +44,19 @@ label.chk{display:inline-flex;gap:4px;align-items:center}
   <div class="row">
     <select id="prio"><option value="0">NOW</option><option value="1">high</option><option value="2" selected>normal</option><option value="3">low</option></select>
     <label class="chk"><input type="checkbox" id="oOpus" checked>opus</label>
-    <label class="chk"><input type="checkbox" id="oMega">mega</label>
+    <label class="chk"><input type="checkbox" id="oMega" onchange="document.getElementById('megaOpts').style.display=this.checked?'':'none'">mega</label>
     <label class="chk">artist window <input type="number" id="oWin" min="1" style="width:56px" placeholder="auto"></label>
     <button class="pri" onclick="addJobs()">Add</button><span class="mut sm" id="addMsg"></span>
   </div>
+  <div class="row" id="megaOpts" style="display:none">
+    <label class="chk">mega account <input type="text" id="oMegaAccount" placeholder="default" style="width:100px"></label>
+    <label class="chk"><input type="checkbox" id="oMegaLink">create shareable link + add to IA description</label>
+  </div>
 </div>
+
+<h2>Archive</h2>
+<div class="card wrap"><table id="archive"><thead><tr>
+<th>Title</th><th>IA</th><th>mega</th><th>Size</th><th>Finished</th></tr></thead><tbody></tbody></table></div>
 
 <h2>Queue</h2>
 <div class="card wrap"><table id="jobs"><thead><tr>
@@ -89,6 +97,10 @@ async function addJobs(){
   const w=$('#oWin').value;
   const b={refs:$('#refs').value,priority:+$('#prio').value,opus:$('#oOpus').checked,mega:$('#oMega').checked};
   if(w)b.window=+w;
+  if($('#oMega').checked){
+    if($('#oMegaAccount').value)b.mega_account=$('#oMegaAccount').value;
+    if($('#oMegaLink').checked)b.mega_link=true;
+  }
   const r=await api('/jobs',b);$('#addMsg').textContent=r.length+' added'+(r.some(x=>x.duplicate)?' (some already queued)':'');
   $('#refs').value='';refresh();
 }
@@ -188,11 +200,21 @@ async function saveSettings(){
   await api('/settings',patch);$('#setMsg').textContent='saved';setTimeout(()=>$('#setMsg').textContent='',2000);
 }
 
+async function archive(){
+  const rows=await api('/manifest?limit=100');
+  $('#archive tbody').innerHTML=rows.map(r=>{
+    const mega=r.mega_link?`<a href="${r.mega_link}" target="_blank">link</a>`:r.mega_path?'<span class="mut">backed up</span>':'';
+    return `<tr><td><b>${esc(r.title||r.identifier)}</b><div class="sm mut">${esc(r.identifier)}</div></td>`+
+      `<td><a href="${r.ia_url}" target="_blank">archive.org</a></td><td>${mega}</td>`+
+      `<td>${gb(r.bytes)}</td><td class="sm mut">${r.finished_at?new Date(r.finished_at*1000).toLocaleString():''}</td></tr>`;
+  }).join('')||'<tr><td colspan="5" class="mut">nothing finished yet</td></tr>';
+}
+
 async function refresh(){
   try{S=await api('/state');renderLanes();renderSettings();
     for(const id of open)await loadParts(id);renderJobs();}catch(e){console.error(e)}
 }
-refresh();stats();setInterval(refresh,2500);setInterval(stats,15000);
+refresh();stats();archive();setInterval(refresh,2500);setInterval(stats,15000);setInterval(archive,20000);
 </script>
 </body>
 </html>

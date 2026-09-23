@@ -14,6 +14,14 @@ mega_backup_release() prints a warning and does nothing — it never
 raises, so a missing/failed backup can't take down the IA upload that
 follows it.
 
+Multiple accounts: name additional accounts under "accounts" in the same
+secrets.json and pass account="name" to mega_backup_release()/
+mega_export_link() to use one instead of the default:
+    {"mega": {"email": "...", "password": "...",
+               "accounts": {"second": {"email": "...", "password": "..."}}}}
+or ARCHIVE_UPLOADER_MEGA_SECOND_EMAIL / ..._PASSWORD per named account.
+The unnamed default account above still works exactly as before.
+
 Requires `megatools` (megaput, megamkdir, megacopy) on PATH:
     apt install megatools   /   brew install megatools   /   build from
     https://megatools.megous.com/
@@ -25,7 +33,11 @@ import subprocess
 from pathlib import Path
 from typing import List
 
-from .config import get_secret
+import json
+import os
+from typing import Optional, Tuple
+
+from .config import SECRETS_FILE, get_secret
 from .models import Release
 from .textutils import slugify
 from .ui import info
@@ -33,15 +45,81 @@ from .ui import info
 REMOTE_ROOT = "/Root/archive_uploader_backups"
 
 
-def _mega_auth_args() -> List[str]:
-    email = get_secret("mega", "email")
-    password = get_secret("mega", "password")
+def _mega_creds(account: Optional[str] = None) -> Tuple[str, str]:
+    """(email, password) for the default account, or a named one from
+    secrets.json's mega.accounts.<account> / ARCHIVE_UPLOADER_MEGA_<ACCOUNT>_*."""
+    if not account:
+        return get_secret("mega", "email"), get_secret("mega", "password")
+
+    env_e = os.environ.get(f"ARCHIVE_UPLOADER_MEGA_{account.upper()}_EMAIL")
+    env_p = os.environ.get(f"ARCHIVE_UPLOADER_MEGA_{account.upper()}_PASSWORD")
+    if env_e and env_p:
+        return env_e, env_p
+
+    if SECRETS_FILE.exists():
+        try:
+            data = json.loads(SECRETS_FILE.read_text())
+            acc = data.get("mega", {}).get("accounts", {}).get(account, {})
+            if acc.get("email") and acc.get("password"):
+                return acc["email"], acc["password"]
+        except (json.JSONDecodeError, OSError):
+            pass
+    return "", ""
+
+
+def _mega_auth_args(account: Optional[str] = None) -> List[str]:
+    email, password = _mega_creds(account)
     if not email or not password:
         return []
     return ["--username", email, "--password", password]
 
 
-def mega_backup_release(rel: Release, remote_root: str = REMOTE_ROOT) -> bool:
+def remote_dir_for(rel: Release, remote_root: str = REMOTE_ROOT) -> str:
+    """The exact remote path mega_backup_release() would use for this
+    release -- factored out so callers (link export, the retroactive
+    linking script) can compute it independently without duplicating the
+    slug logic or needing a live upload to happen first."""
+    base = f"{rel.artist} {rel.title}".strip() or rel.dir_or_file.name
+    return f"{'/' + remote_root.strip('/')}/{slugify(base)}"
+
+
+def mega_export_link(remote_dir: str, account: Optional[str] = None) -> str:
+    """Creates (or re-fetches, megaexport is idempotent) a public share link
+    for an existing remote folder. Returns "" on any failure -- treat a
+    missing link as "couldn't get one this time", never fatal.
+
+    NOTE: megaexport's exact stdout format is parsed leniently (first
+    http(s):// token on any line) rather than matched exactly, since this
+    hasn't been verified against a real run yet -- check the first real
+    call's printed output against what comes back."""
+    auth = _mega_auth_args(account)
+    if not auth:
+        return ""
+    if not shutil.which("megaexport"):
+        print("  ! megaexport not found on PATH -- can't create a shareable link.")
+        return ""
+    try:
+        result = subprocess.run(
+            ["megaexport", *auth, "--no-ask-password", "--create", remote_dir],
+            capture_output=True, text=True, timeout=60,
+        )
+        out = (result.stdout or "") + "\n" + (result.stderr or "")
+        if result.returncode != 0 and "http" not in out:
+            print(f"  ! Could not create mega share link for {remote_dir}: {out.strip()}")
+            return ""
+        for line in out.splitlines():
+            for tok in line.split():
+                if tok.startswith("http"):
+                    return tok.strip()
+        print(f"  ! megaexport ran but no link found in its output: {out.strip()!r}")
+        return ""
+    except Exception as e:
+        print(f"  ! mega export link failed: {e}")
+        return ""
+
+
+def mega_backup_release(rel: Release, remote_root: str = REMOTE_ROOT,
+                        account: Optional[str] = None) -> bool:
     """Uploads rel's original local files to mega.nz, preserving folder
     structure for albums (via megacopy) or uploading the file(+cover)
     directly for singles (via megaput). Returns True on reported
@@ -55,14 +133,12 @@ def mega_backup_release(rel: Release, remote_root: str = REMOTE_ROOT) -> bool:
               "(install from https://megatools.megous.com/)")
         return False
 
-    auth = _mega_auth_args()
+    auth = _mega_auth_args(account)
     if not auth:
         print("  ! No mega.nz credentials configured (see mega_backup.py docstring) — skipping backup.")
         return False
 
-    base = f"{rel.artist} {rel.title}".strip() or target.name
-    remote_root = "/" + remote_root.strip("/")
-    remote_dir = f"{remote_root}/{slugify(base)}"
+    remote_dir = remote_dir_for(rel, remote_root)
 
     print(f"  ☁️  Backing up to mega.nz: {remote_dir}")
     try:
