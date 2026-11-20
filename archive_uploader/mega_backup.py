@@ -21,6 +21,7 @@ Requires `megatools` (megaput, megamkdir, megacopy) on PATH:
 from __future__ import annotations
 
 import shutil
+import sys
 import subprocess
 from pathlib import Path
 from typing import List
@@ -100,6 +101,7 @@ def mega_backup_release(rel: Release, remote_root: str = REMOTE_ROOT) -> bool:
             result = subprocess.run(
                 ["megacopy", *auth, "--no-ask-password",
                  "--local", str(target), "--remote", remote_dir],
+                stderr=subprocess.PIPE, text=True,
             )
         else:
             if not shutil.which("megaput"):
@@ -112,9 +114,21 @@ def mega_backup_release(rel: Release, remote_root: str = REMOTE_ROOT) -> bool:
             result = subprocess.run(
                 ["megaput", *auth, "--no-ask-password",
                  "--path", remote_dir + "/", *files],
+                 stderr=subprocess.PIPE, text=True,
             )
 
         if result.returncode != 0:
+            stderr = result.stderr or ""
+            if stderr:
+                print(stderr, end="", file=sys.stderr)    # surface what the tool said
+            errors = [l for l in stderr.splitlines() if l.lstrip().startswith("ERROR")]
+            fatal = [l for l in errors if "already exist" not in l.lower()]
+
+            if error and not fatal:
+                info(f"✓ mega.nz backup complete "
+                    f"({len(errors)} file(s) already present remotely).", 2)
+                return True
+
             print(f"  ! mega.nz backup failed (exit {result.returncode})")
             return False
 
