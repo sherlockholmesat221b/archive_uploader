@@ -62,7 +62,7 @@ def mega_backup_release(rel: Release, remote_root: str = REMOTE_ROOT) -> bool:
 
     base = f"{rel.artist} {rel.title}".strip() or target.name
     remote_root = "/" + remote_root.strip("/")
-    remote_dir = f"{remote_root}/{slugify(base)}"
+    remote_dir = f"{remote_root}/{slugify(base)}/{rel.title}"
 
     print(f"  ☁️  Backing up to mega.nz: {remote_dir}")
     try:

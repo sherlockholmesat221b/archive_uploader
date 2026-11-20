@@ -29,8 +29,9 @@ def test_mega_backup_creates_remote_parent_chain_for_album(tmp_path):
     assert mkdirs == [
         "/archive_uploader_backups",
         "/archive_uploader_backups/artist-album",
+        "/archive_uploader_backups/artist-album/Album",
     ]
-    assert calls[2][0] == "megacopy"
+    assert calls[3][0] == "megacopy"
 
 
 def test_mega_backup_keeps_going_when_parent_already_exists(tmp_path):

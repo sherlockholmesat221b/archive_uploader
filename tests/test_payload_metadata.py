@@ -47,7 +47,7 @@ def test_payload_contains_all_track_isrcs_and_rich_metadata(tmp_path, monkeypatc
     # Avoid packaging/encoding in this metadata-only test.
     monkeypatch.setattr("archive_uploader.ia.payload.compute_script_hash", lambda: "x" * 64)
     monkeypatch.setattr("archive_uploader.ia.payload.get_repo_ref", lambda: "test")
-    monkeypatch.setattr("archive_uploader.ia.payload.derive_opus_file", lambda *a, **k: (_ for _ in ()).throw(RuntimeError()))
+    monkeypatch.setattr("archive_uploader.ia.payload.derive_opus_batch", lambda *a, **k: (_ for _ in ()).throw(RuntimeError()))
     monkeypatch.setattr("archive_uploader.ia.payload.create_clean_zip", lambda *a, **k: None)
 
     identifier, metadata, _, cleanup = build_ia_payload(
