@@ -21,6 +21,11 @@ _RATE_SIGNS = (
     "429", "503", "appears to be spam", "rate limit",
 )
 
+# Exceptions that indicate a code bug, not a transient failure. Retrying these
+# just wastes backoff on a deterministic error, so _upload_one re-raises
+# immediately instead of sleeping.
+_DETERMINISTIC_ERRORS = (TypeError, AttributeError, KeyError, NameError, IndexError)
+
 _print_lock = threading.Lock()
 _pace_lock = threading.Lock()
 _next_slot = 0.0          # earliest time the next request may start
@@ -62,6 +67,27 @@ def _is_rate_limited(err: Exception) -> bool:
     return any(s in msg for s in _RATE_SIGNS)
 
 
+def _status_code(resp):
+    """Best-effort integer status code from an ia.upload() response object.
+
+    internetarchive returns heterogeneous objects here: real requests.Response
+    objects with an int status_code, lightweight shims whose status_code is
+    None, and occasionally objects with no status_code attribute at all.
+    A missing/None status is treated as 'unknown, assume OK' — ia.upload would
+    have raised on a real HTTP failure, so a non-raising response is a success
+    signal. We log the unknown case so it's visible if it recurs.
+    """
+    if resp is None:
+        return None
+    code = getattr(resp, "status_code", None)
+    if code is None:
+        return None
+    try:
+        return int(code)
+    except (TypeError, ValueError):
+        return None
+
+
 def _upload_one(identifier, key, path, metadata, fatal, verbose) -> float:
     """Upload one file. Backs off long on throttling, short on network errors."""
     global _cooldown_until
@@ -81,9 +107,19 @@ def _upload_one(identifier, key, path, metadata, fatal, verbose) -> float:
                 retries_sleep=30,
                 request_kwargs={"timeout": TIMEOUT},
             )
-            bad = [r for r in responses if getattr(r, "status_code", 200) >= 400]
+            bad = []
+            unknown = 0
+            for r in responses:
+                code = _status_code(r)
+                if code is None:
+                    unknown += 1
+                elif code >= 400:
+                    bad.append(code)
             if bad:
-                raise RuntimeError(f"HTTP {bad[0].status_code} uploading {key}")
+                raise RuntimeError(f"HTTP {bad[0]} uploading {key}")
+            if unknown:
+                _say(f"  · note: {Path(key).name}: "
+                     f"{unknown} response(s) with no status_code (treated as success)")
             return time.time() - t0
         except Exception as e:
             if any(f in str(e).lower() for f in fatal):
@@ -102,6 +138,11 @@ def _upload_one(identifier, key, path, metadata, fatal, verbose) -> float:
                 _say(f"\n  ! IA throttled us on {Path(key).name}; pausing all uploads {wait // 60} min "
                      f"({rate_hits}/{len(RATE_WAITS)})")
                 continue
+            # Programming bugs (None comparisons, missing attrs, bad indexes) are
+            # deterministic — retrying just burns minutes of backoff on the same
+            # failure. Fail fast with the real traceback.
+            if isinstance(e, _DETERMINISTIC_ERRORS):
+                raise
             if attempt == ATTEMPTS:
                 raise
             wait = min(30 * attempt, 180)
